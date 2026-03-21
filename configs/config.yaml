@@ -32,8 +32,8 @@ sampling:
 
 api:
   overpass_url: "https://overpass-api.de/api/interpreter"
-  grok_model: "grok-1"
-  cds_url: "https://cds.climate.copernicus.eu/api/v2"
+  groq_model: "llama-3.3-70b-versatile"
+  cds_url: "https://cds.climate.copernicus.eu/api"
 
 rasters:
   copernicus:
