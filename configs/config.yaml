@@ -1,0 +1,58 @@
+project:
+  name: energy_profiling_thesis
+  version: "1.0"
+  python_version: "3.11"
+
+paths:
+  data_raw: data/raw
+  data_processed: data/processed
+  coordinates: data/coordinates
+  rasters_root: rasters/
+  outputs_csv: outputs/csv
+  outputs_captions: outputs/captions
+  outputs_maps: outputs/maps
+  tiles: tiles/
+  logs: logs/
+
+sampling:
+  total_coordinates: 1000
+  min_spacing_km: 1.0
+  bbox_size_m: 256
+  strata:
+    dense_urban: 150
+    industrial: 150
+    suburban: 150
+    agricultural: 100
+    forest: 100
+    coastal: 100
+    arid: 100
+    alpine: 75
+    informal_settlements: 75
+    water_wetland: 50
+
+api:
+  overpass_url: "https://overpass-api.de/api/interpreter"
+  grok_model: "grok-1"
+  cds_url: "https://cds.climate.copernicus.eu/api/v2"
+
+rasters:
+  copernicus:
+    clc: rasters/copernicus/clc/
+    imperviousness: rasters/copernicus/hrl/imperviousness/
+    tree_cover: rasters/copernicus/hrl/tree_cover/
+    urban_atlas: rasters/copernicus/urban_atlas/
+    era5: rasters/copernicus/era5/
+  viirs:
+    nighttime_lights: rasters/viirs/nighttime_lights/
+    ndvi_evi: rasters/viirs/ndvi_evi/
+    surface_reflectance: rasters/viirs/surface_reflectance/
+  ghsl:
+    built_surface: rasters/ghsl/built_surface/
+    building_height: rasters/ghsl/building_height/
+    population: rasters/ghsl/population/
+    degurba: rasters/ghsl/degurba/
+  global_solar_atlas: rasters/global_solar_atlas/
+
+logging:
+  level: INFO
+  log_file: logs/pipeline.log
