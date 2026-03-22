@@ -56,7 +56,7 @@ api:
   overpass_url: "https://overpass-api.de/api/interpreter"
   groq_model: "llama-3.3-70b-versatile"
   cds_url: "https://cds.climate.copernicus.eu/api"
-  gee_project: "your_gee_project_id_here"
+  gee_project: "energy-thesis"
 
 logging:
   level: INFO
