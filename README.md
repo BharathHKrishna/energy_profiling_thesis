@@ -2,7 +2,7 @@
 
 Geospatial energy profiling pipeline for master's thesis.
 Extracts energy-relevant features from 7 open data sources
-for 1000 globally stratified coordinates, converts to text labels,
+for 5000 globally stratified coordinates, converts to text labels,
 and generates energy profile captions via Groq + LangChain.
 
 ## Setup
