@@ -30,28 +30,33 @@ sampling:
     informal_settlements: 75
     water_wetland: 50
 
+rasters:
+  ghsl:
+    built_surface: rasters/ghsl/built_surface/GHS_BUILT_S_E2020_GLOBE_R2023A_54009_100_V1_0.tif
+    building_height: rasters/ghsl/building_height/GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0.tif
+    population: rasters/ghsl/population/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0.tif
+    degurba: rasters/ghsl/degurba/GHS_SMOD_E2020_GLOBE_R2023A_54009_1000_V2_0.tif
+  global_solar_atlas:
+    dni: rasters/global_solar_atlas/World_DNI_GISdata_LTAy_AvgDailyTotals_GlobalSolarAtlas-v2_GEOTIFF/DNI.tif
+    ghi: rasters/global_solar_atlas/World_GHI_GISdata_LTAy_AvgDailyTotals_GlobalSolarAtlas-v2_GEOTIFF/GHI.tif
+    pvout: rasters/global_solar_atlas/World_PVOUT_GISdata_LTAy_AvgDailyTotals_GlobalSolarAtlas-v2_GEOTIFF/PVOUT.tif
+  esa_worldcover:
+    s3_bucket: "s3://esa-worldcover/v200/2021/map/"
+    tile_pattern: "ESA_WorldCover_10m_2021_v200_{lat_tile}{lon_tile}_Map.tif"
+    local_cache: rasters/esa_worldcover/
+  viirs:
+    source: google_earth_engine
+    nighttime_lights: NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG
+    ndvi: MODIS/061/MOD13A1
+    surface_reflectance: MODIS/061/MOD09A1
+  copernicus:
+    era5: rasters/copernicus/era5/
+
 api:
   overpass_url: "https://overpass-api.de/api/interpreter"
   groq_model: "llama-3.3-70b-versatile"
   cds_url: "https://cds.climate.copernicus.eu/api"
-
-rasters:
-  copernicus:
-    clc: rasters/copernicus/clc/
-    imperviousness: rasters/copernicus/hrl/imperviousness/
-    tree_cover: rasters/copernicus/hrl/tree_cover/
-    urban_atlas: rasters/copernicus/urban_atlas/
-    era5: rasters/copernicus/era5/
-  viirs:
-    nighttime_lights: rasters/viirs/nighttime_lights/
-    ndvi_evi: rasters/viirs/ndvi_evi/
-    surface_reflectance: rasters/viirs/surface_reflectance/
-  ghsl:
-    built_surface: rasters/ghsl/built_surface/
-    building_height: rasters/ghsl/building_height/
-    population: rasters/ghsl/population/
-    degurba: rasters/ghsl/degurba/
-  global_solar_atlas: rasters/global_solar_atlas/
+  gee_project: "your_gee_project_id_here"
 
 logging:
   level: INFO
