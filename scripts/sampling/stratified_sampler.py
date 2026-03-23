@@ -102,6 +102,10 @@ STRATA = {
             {"lat": (5.0, 15.0), "lon": (10.0, 35.0)},
             # Ukraine/Russia breadbasket
             {"lat": (46.0, 52.0), "lon": (28.0, 40.0)},
+            # Kazakhstan steppes
+            {"lat": (45.0, 55.0), "lon": (55.0, 80.0)},  
+            # Mexico
+            {"lat": (18.0, 28.0), "lon": (-110.0, -95.0)},  
         ]
     },
     "forest": {
@@ -119,6 +123,10 @@ STRATA = {
             {"lat": (-5.0, 5.0), "lon": (100.0, 118.0)},
             # Scandinavia forest
             {"lat": (60.0, 68.0), "lon": (15.0, 28.0)},
+            # Siberian forest
+            {"lat": (45.0, 55.0), "lon": (80.0, 110.0)},  
+            # Great Lakes forest Canada
+            {"lat": (45.0, 50.0), "lon": (-90.0, -75.0)},  
         ]
     },
     "coastal": {
@@ -157,6 +165,10 @@ STRATA = {
             {"lat": (38.0, 46.0), "lon": (98.0, 112.0)},
             # Iran/Pakistan arid
             {"lat": (26.0, 34.0), "lon": (56.0, 68.0)},
+            # Horn of Africa/Sudan
+            {"lat": (15.0, 25.0), "lon": (35.0, 45.0)},
+            # Central Asia/Mongolia
+            {"lat": (38.0, 48.0), "lon": (80.0, 100.0)},
         ]
     },
     "alpine": {
