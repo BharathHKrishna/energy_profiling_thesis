@@ -15,7 +15,7 @@ paths:
   logs: logs/
 
 sampling:
-  total_coordinates: 5000
+  total_coordinates: 5250
   min_spacing_km: 1.0
   bbox_size_m: 256
   strata:

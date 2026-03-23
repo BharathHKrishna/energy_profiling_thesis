@@ -42,3 +42,4 @@ and generates energy profile captions via Groq + LangChain.
 - [x] Day 2 — All APIs registered, Overpass + CDS + Groq tested
 - [x] Day 3 — GHSL (4 layers) + Global Solar Atlas (DNI/GHI/PVOUT) downloaded locally
 - [x] Day 4 — Google Earth Engine registered, authenticated on server, VIIRS and NDVI queries tested and confirmed working
+- [x] Day 5 — Stratified sampling script complete. 5,250 coordinates generated across 10 global strata. CSV and Folium world map saved.
