@@ -4,11 +4,28 @@ __pycache__/
 *.pyc
 *.pyo
 .ipynb_checkpoints/
+
+# Logs
 logs/
+notebooks/logs/
+
+# Large raster data (downloaded separately)
 rasters/
+
+# Raw data
 data/raw/
+data/coordinates/
+
+# Generated outputs
 outputs/
+
+# Tiles cache
+tiles/
+
+# OS
 *.DS_Store
+
+# Build artifacts
 *.egg-info/
 dist/
 build/
