@@ -52,7 +52,7 @@ def sample_era5_ssrd(min_lat, max_lat, min_lon, max_lon):
                 src.transform
             )
 
-            # ERA5 is 0.25° resolution — 256m bbox is sub-pixel
+            # ERA5 is 0.25° resolution — 512m bbox is sub-pixel
             # Expand to minimum 1 pixel
             window = rasterio.windows.Window( # type: ignore
                 int(floor(window.col_off)),
@@ -99,7 +99,7 @@ def sample_era5_ssrd(min_lat, max_lat, min_lon, max_lon):
 
 def extract_era5_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Extract ERA5 features for a 256×256m bounding box.
+    Extract ERA5 features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
         era5_ssrd_j_m2_day — surface solar radiation downwards (J/m²/day annual mean)
@@ -132,7 +132,12 @@ def extract_era5_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
 # ── Main — quick test ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from scripts.sampling.stratified_sampler import generate_bbox
+    import math
+    def generate_bbox(lat, lon, size_m=512):
+        half = size_m / 2
+        dlat = half / 111320
+        dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
+        return dict(min_lat=lat-dlat, max_lat=lat+dlat, min_lon=lon-dlon, max_lon=lon+dlon)
 
     TEST_COORDS = [
         ("arid_high_solar", 26.0000,   3.0000),   # Sahara — expect very high SSRD

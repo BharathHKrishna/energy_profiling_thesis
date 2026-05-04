@@ -3,27 +3,27 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .ipynb_checkpoints/
 
 # Logs
 logs/
-notebooks/logs/
 
-# Large raster data (downloaded separately)
+# Large raster data (download separately — see README)
 rasters/
-
-# Raw data
-data/raw/
-data/coordinates/
 
 # Generated outputs
 outputs/
+
+# Backup files
+*.bak
 
 # Tiles cache
 tiles/
 
 # OS
-*.DS_Store
+.DS_Store
+Thumbs.db
 
 # Build artifacts
 *.egg-info/

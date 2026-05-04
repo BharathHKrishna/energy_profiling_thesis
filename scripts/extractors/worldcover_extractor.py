@@ -73,7 +73,7 @@ def get_worldcover_tile_url(lat, lon):
 # ── Pixel fetch ────────────────────────────────────────────────────────────────
 def fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon):
     """
-    Fetch WorldCover pixel array for a 256×256m bounding box.
+    Fetch WorldCover pixel array for a 512×512m bounding box.
     Uses /vsicurl/ to read only the bbox window from the remote GeoTIFF.
 
     Returns:
@@ -109,7 +109,7 @@ def fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon):
 # ── Main extraction function ───────────────────────────────────────────────────
 def extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Extract comprehensive WorldCover features for a 256×256m bounding box.
+    Extract comprehensive WorldCover features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
         wc_dominant_class        — name of most frequent class
@@ -223,7 +223,12 @@ def strip_internal_features(features):
 # ── Main — quick test ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from scripts.sampling.stratified_sampler import generate_bbox
+    import math
+    def generate_bbox(lat, lon, size_m=512):
+        half = size_m / 2
+        dlat = half / 111320
+        dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
+        return dict(min_lat=lat-dlat, max_lat=lat+dlat, min_lon=lon-dlon, max_lon=lon+dlon)
 
     TEST_COORDS = [
         ("dense_urban",    52.5200,  13.4050),   # Berlin — expect built_up dominant

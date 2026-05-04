@@ -56,7 +56,7 @@ GHSL_NODATA = {
 
 def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
     """
-    Sample one GHSL raster layer within a 256×256m bounding box.
+    Sample one GHSL raster layer within a 512×512m bounding box.
 
     GHSL rasters are in Mollweide projection (ESRI:54009).
     Bbox is given in WGS84 (EPSG:4326).
@@ -201,7 +201,7 @@ def sample_degurba(min_lat, max_lat, min_lon, max_lon):
 
 def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Extract all 4 GHSL features for a 256×256m bounding box.
+    Extract all 4 GHSL features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
         ghsl_built_surface_m2    — mean built-up surface area (m²) per 100m cell
@@ -250,7 +250,12 @@ def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
-    from scripts.sampling.stratified_sampler import generate_bbox
+    import math
+    def generate_bbox(lat, lon, size_m=512):
+        half = size_m / 2
+        dlat = half / 111320
+        dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
+        return dict(min_lat=lat-dlat, max_lat=lat+dlat, min_lon=lon-dlon, max_lon=lon+dlon)
 
     # 3 test coordinates covering different GHSL scenarios
     TEST_COORDS = [

@@ -62,7 +62,7 @@ def sample_solar_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
             )
 
             # ── Window too small fix ───────────────────────────────────────────
-            # Solar Atlas is ~1km resolution — a 256m bbox is sub-pixel.
+            # Solar Atlas is ~1km resolution — a 512m bbox is sub-pixel.
             # Expand window by 1 pixel in each direction to guarantee a read.
             from math import floor, ceil
             window = RasterioWindow(
@@ -103,7 +103,7 @@ def sample_solar_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
 
 def extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Extract all 3 Solar Atlas features for a 256×256m bounding box.
+    Extract all 3 Solar Atlas features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
         solar_pvout_kwh_kwp_yr  — photovoltaic power output potential
@@ -140,7 +140,12 @@ def extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
 # ── Main — quick test on 3 coordinates ────────────────────────────────────────
 
 if __name__ == "__main__":
-    from scripts.sampling.stratified_sampler import generate_bbox
+    import math
+    def generate_bbox(lat, lon, size_m=512):
+        half = size_m / 2
+        dlat = half / 111320
+        dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
+        return dict(min_lat=lat-dlat, max_lat=lat+dlat, min_lon=lon-dlon, max_lon=lon+dlon)
 
     TEST_COORDS = [
         ("arid_high_solar",    26.0000,   3.0000),   # Sahara — expect very high values

@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BORE — 18 Strata Methodology</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 32px 24px;
+  }
+  h1 {
+    font-size: 22px;
+    color: #f8fafc;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: #64748b;
+    font-size: 13px;
+    margin-bottom: 32px;
+    font-family: monospace;
+  }
+
+  /* Pipeline legend */
+  .pipeline {
+    display: flex;
+    gap: 0;
+    align-items: center;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .pipe-step {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-family: monospace;
+  }
+  .pipe-step span { color: #7F77DD; font-weight: bold; }
+  .pipe-arrow { color: #475569; font-size: 16px; padding: 0 4px; }
+
+  /* Tier sections */
+  .tier-header {
+    font-size: 11px;
+    font-family: monospace;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin: 28px 0 14px;
+    display: inline-block;
+  }
+  .tier-HIGH { background: #1e1b4b; color: #818cf8; border: 1px solid #3730a3; }
+  .tier-MID  { background: #1e1a2e; color: #a78bfa; border: 1px solid #5b21b6; }
+  .tier-LOW  { background: #1c1917; color: #a8a29e; border: 1px solid #57534e; }
+
+  /* Stratum card */
+  .card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: #1a2540;
+    border-bottom: 1px solid #334155;
+  }
+  .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+  .badge {
+    font-size: 10px;
+    font-family: monospace;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+  .badge-union { background: #0f2d4a; color: #38bdf8; border: 1px solid #0369a1; }
+  .badge-pure  { background: #0d2b2b; color: #34d399; border: 1px solid #065f46; }
+  .badge-2500  { background: #1e1a2e; color: #c4b5fd; border: 1px solid #5b21b6; font-size: 10px; }
+
+  .card-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+  }
+  .col {
+    padding: 14px 16px;
+    border-right: 1px solid #1e293b;
+  }
+  .col:last-child { border-right: none; }
+  .col-label {
+    font-size: 10px;
+    font-family: monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #475569;
+    margin-bottom: 8px;
+  }
+
+  /* OSM tags */
+  .osm-tag {
+    display: inline-block;
+    background: #0f2438;
+    color: #7dd3fc;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin: 2px 2px 2px 0;
+    border: 1px solid #164e63;
+  }
+  .osm-region {
+    font-size: 11px;
+    color: #64748b;
+    font-family: monospace;
+    margin-top: 4px;
+  }
+
+  /* ESA filters */
+  .esa-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+  .esa-class {
+    font-family: monospace;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+  }
+  .cls-water     { background: #0c2d6b; color: #60a5fa; }
+  .cls-built_up  { background: #2d1b1b; color: #f87171; }
+  .cls-bare      { background: #2d2a1b; color: #fbbf24; }
+  .cls-cropland  { background: #1b2d1b; color: #4ade80; }
+  .cls-tree      { background: #0d2d1b; color: #34d399; }
+  .cls-mangrove  { background: #0d2b2d; color: #2dd4bf; }
+  .cls-grassland { background: #1e2b10; color: #a3e635; }
+
+  .threshold {
+    font-family: monospace;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .threshold-cap { color: #f59e0b; }
+
+  /* GHSL pills */
+  .ghsl-pill {
+    display: inline-block;
+    background: #14202e;
+    border: 1px solid #1e3a5f;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #93c5fd;
+    margin: 2px 2px 2px 0;
+  }
+  .ghsl-none { color: #334155; font-style: italic; font-size: 11px; }
+
+  /* Selection rule */
+  .rule-box {
+    background: #0f1c2e;
+    border: 1px solid #1e3a5f;
+    border-radius: 5px;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #bae6fd;
+    margin-bottom: 6px;
+  }
+  .rule-box.rule-secondary { background: #1a1030; border-color: #3b1d8a; color: #c4b5fd; }
+  .rule-box.rule-minimum   { background: #1a2010; border-color: #365314; color: #86efac; }
+
+  .why { font-size: 11px; color: #475569; margin-top: 5px; font-style: italic; }
+
+  @media (max-width: 900px) {
+    .card-body { grid-template-columns: 1fr; }
+    .col { border-right: none; border-bottom: 1px solid #1e293b; }
+  }
+</style>
+</head>
+<body>
+
+<h1>BORE — 18 Strata Methodology</h1>
+<p class="subtitle">Bbox-centred OSM-filtered Raster-Evaluated · 512 m × 512 m · OSM → ESA WorldCover → GHSL</p>
+
+<div class="pipeline">
+  <div class="pipe-step"><span>1.</span> OSM Overpass</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>2.</span> 512 m bbox</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>3.</span> ESA WorldCover pixel %</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>4.</span> GHSL pop / height / built-surface</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>5.</span> Anchor selection rule</div>
+</div>
+
+
+<!-- ═══════════════════════ HIGH TIER ═══════════════════════ -->
+<div class="tier-header tier-HIGH">HIGH tier — 6 strata · 250 union / 300 pure per stratum (2500 run)</div>
+
+
+<!-- Industrial + Water -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">250 coords</span>
+    <span class="card-title">Industrial + Water</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">waterway=dock</span>
+      <span class="osm-tag">man_made=crane</span>
+      <span class="osm-tag">man_made=petroleum_refinery</span>
+      <div class="osm-region">Global · out center 1000</div>
+      <p class="why">Docks are water basins by definition. Cranes sit at the quay edge — both built_up + water guaranteed in the 512 m frame.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 20% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 35% (secondary)</span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">bsurf ≥ 300 m²</span>
+      <p class="why" style="margin-top:8px">Any real industrial facility has ≥ 300 m² built footprint per 100 m cell.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (water%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Urban + Coastal -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">250 coords</span>
+    <span class="card-title">Urban + Coastal</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">harbour=yes</span>
+      <div class="osm-region">Global · out 1000</div>
+      <p class="why">Harbour nodes sit at the water-land boundary — bbox captures quays, warehouses, and open water together.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 12% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 25% (secondary)</span>
+      </div>
+      <p class="why">12% = a 60 m-wide channel visible at 512 m scale. 25% = real port infrastructure present.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">bsurf ≥ 500 m²</span>
+      <p class="why" style="margin-top:8px">Port quays, warehouses, cranes always yield ≥ 500 m² per 100 m cell.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (water%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Informal + Urban -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-pure">PURE</span>
+    <span class="badge badge-2500">250 coords</span>
+    <span class="card-title">Informal + Urban</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">place=city</span>
+      <div class="osm-region">Africa + Middle East (−5,10 → 15,45) · out 500</div>
+      <p class="why">City nodes in Sub-Saharan Africa land in dense low-rise informal settlements. The bbox over a city centroid captures the organic street fabric, not the formal business core.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 40% (primary, pure)</span>
+      </div>
+      <p class="why">No secondary class required — the stratum is defined purely by high built_up density.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">height ≤ 7 m</span>
+      <p class="why" style="margin-top:8px">The universal informal discriminator. Informal African cities: Kampala 2.7 m, Ouagadougou 3.3 m, Conakry 3.7 m — all well below 7 m. Formal dense urban averages > 7 m (Paris 8.4 m, Cairo 8.7 m).</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Dense Urban -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-pure">PURE</span>
+    <span class="badge badge-2500">300 coords</span>
+    <span class="card-title">Dense Urban</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">capital=yes</span>
+      <div class="osm-region">Global · out 500</div>
+      <p class="why">Capital nodes concentrate in city centres — the highest-density urban fabric globally. Single tag, no bbox needed.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 80% (primary, pure)</span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≥ 20 /cell</span>
+      <span class="ghsl-pill">height ≥ 3 m</span>
+      <span class="ghsl-pill">bsurf ≥ 2500 m²</span>
+      <p class="why" style="margin-top:8px">pop ≥ 20 excludes Phoenix-style commercial strips (pop ≈ 2). height ≥ 3 m rules out single-storey sprawl. bsurf ≥ 2500 confirms dense block fabric (Paris = 4131, Cairo = 3588).</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Suburban -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-pure">PURE</span>
+    <span class="badge badge-2500">300 coords</span>
+    <span class="card-title">Suburban</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">place=town</span>
+      <div class="osm-region">SE Asia (10,100→20,110) · E.Europe (46,20→52,32) · S.America (−23,−50→−15,−40) · out 1000</div>
+      <p class="why">Town nodes in low-rise peri-urban rings. Africa bbox removed — ESA over-classifies small African settlements as 99%+ built_up, producing forest-settlement fringe anchors rather than genuine suburban fabric.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 50% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold threshold-cap">≤ 85% cap</span>
+      </div>
+      <p class="why">Cap at 85% prevents anchors that look identical to Dense Urban city cores.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 500 /cell</span>
+      <span class="ghsl-pill">height ≤ 15 m</span>
+      <p class="why" style="margin-top:8px">pop ≤ 500 (≈ 50,000 /km²) prevents city-centre hits. height ≤ 15 m: Phoenix-style strip malls average 13 m but are suburban in character.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Industrial -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-pure">PURE</span>
+    <span class="badge badge-2500">300 coords</span>
+    <span class="card-title">Industrial</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">man_made=cooling_tower</span>
+      <span class="osm-tag">power=plant [coal]</span>
+      <span class="osm-tag">power=plant [gas]</span>
+      <span class="osm-tag">landuse=industrial [manufacturing]</span>
+      <div class="osm-region">Global · out center 1500</div>
+      <p class="why">Cooling towers and power plant polygons concentrate dense industrial ESA signatures — large roofs, cooling ponds, tarmac aprons all push built_up high.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 75% (primary, pure)</span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 300 /cell</span>
+      <span class="ghsl-pill">bsurf ≥ 500 m²</span>
+      <p class="why" style="margin-top:8px">Factories are uninhabited (pop ≤ 300 ≈ 30,000 /km²). bsurf ≥ 500 ensures a real industrial campus, not a rural field with one shed.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ MID TIER ═══════════════════════ -->
+<div class="tier-header tier-MID">MID tier — 7 strata · 100 coords each (2500 run)</div>
+
+
+<!-- Data Centre + Industrial -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-pure">PURE</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Data Centre + Industrial</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">telecom=data_center</span>
+      <span class="osm-tag">building=data_center</span>
+      <span class="osm-tag">building=data_centre</span>
+      <div class="osm-region">Hyperscale corridors only: US Virginia · US Dallas · US Chicago · Amsterdam · Frankfurt · Singapore · London · out center 1000</div>
+      <p class="why">Bboxed to established hyperscale DC corridors to avoid small ISP offices mislabelled as data_center in OSM (e.g. residential Barquisimeto, Venezuela, which passed a global query).</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 40% (primary, pure)</span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 1500 /cell</span>
+      <span class="ghsl-pill">bsurf ≥ 500 m²</span>
+      <p class="why" style="margin-top:8px">pop ≤ 1500 keeps out dense residential city centres. bsurf ≥ 500 confirms large server-hall footprint (DC halls are wide, flat structures).</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Industrial + Arid -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Industrial + Arid</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">man_made=petroleum_well</span>
+      <span class="osm-tag">man_made=gas_well</span>
+      <span class="osm-tag">man_made=flare</span>
+      <span class="osm-tag">man_made=works</span>
+      <span class="osm-tag">landuse=industrial</span>
+      <span class="osm-tag">landuse=quarry</span>
+      <span class="osm-tag">power=generator [solar]</span>
+      <div class="osm-region">Yemen/Saudi (17,44→24,56) · Libya/Algeria (26,8→30,18) · Sinai (25,28→29,33) · Australia Pilbara (−26,117→−20,121) · out center 4000</div>
+      <p class="why">Works + industrial ways added after petroleum well nodes alone had zero built_up in the 512 m frame — a wellhead is a 2 m structure. Works/industrial polygons have real building footprints, guaranteeing built_up in bbox.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-bare">bare_sparse</span>
+        <span class="threshold">≥ 40% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 1% (secondary)</span>
+      </div>
+      <p class="why">Raised from 25% → 40%: 25% let UAE industrial parks pass (bs=29%, bu=71%) where the frame looked like a city, not a desert. 40% guarantees the landscape reads as arid. 1% of 512 m ≈ one 51×51 m well pad or flare stack.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 100 /cell</span>
+      <span class="ghsl-pill">bsurf ≥ 200 m²</span>
+      <p class="why" style="margin-top:8px">pop lowered 300 → 100: Libyan towns (pop ≈ 300) passed despite looking urban. True petroleum/mining sites are uninhabited. bsurf ≥ 200 rules out bare desert with only a dirt road (road pixels can push built_up ≥ 1%).</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (built_up%) — most visible infrastructure in desert</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Agrivoltaics -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Agrivoltaics (Solar + Farmland)</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">power=generator [solar]</span>
+      <span class="osm-tag">power=plant [solar]</span>
+      <div class="osm-region">Gujarat India · Punjab Pakistan · Nile Delta Egypt · Henan/Shandong China · Saxony Germany · Nebraska/Iowa USA · Extremadura Spain · Nouvelle-Aquitaine France · out center 5000</div>
+      <p class="why">Anhui/Jiangsu China removed — fish-pond floating solar where ESA "cropland" was miscoded adjacent paddy. Henan/Shandong added instead: Yellow River wheat plains with no pond interference.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-cropland">cropland</span>
+        <span class="threshold">≥ 25% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 15% (secondary)</span>
+      </div>
+      <p class="why">Cropland raised 20% → 25%: 20% admitted fish-pond floating-solar where "cropland" was miscoded adjacent paddy. Built_up fixed from a code bug (was 25%, comment said 15%) — fixing this recovered pass rate from 1.2% → 5.5%.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-none">None</span>
+      <p class="why" style="margin-top:8px">Solar farms on farmland are genuinely remote. Population and height gates would over-filter.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (built_up%) — most panel coverage in frame</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Industrial + Forest -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Industrial + Forest</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">man_made=sawmill</span>
+      <span class="osm-tag">industrial=sawmill</span>
+      <div class="osm-region">Russia/Siberia (56,40→70,130) · Scandinavia (56,20→70,40) · Carpathians (44,22→50,30) · Canada BC (48,−130→58,−115) · US Pacific NW (43,−125→48,−120) · New Zealand (−47,166→−43,172) · out center 1000</div>
+      <p class="why">Bboxed to forested regions only — prevents urban sawmills in city centres passing the tree_cover gate.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-tree">tree_cover</span>
+        <span class="threshold">≥ 20% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 5% (secondary)</span>
+      </div>
+      <p class="why">Raised tree_cover from 15% → 20%: 15% let suburban sawmills pass (tc=16%, bu=49%) where the frame looked like a city with some trees, not forest.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 300 /cell</span>
+      <p class="why" style="margin-top:8px">Sawmill areas are sparsely populated.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (built_up%) — most sawmill structure visible against forest</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Hydropower Reservoir -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Hydropower Reservoir</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">waterway=dam</span>
+      <div class="osm-region">China Yangtze/Mekong · Brazil Paraná/Itaipu · Norway fjords · India Deccan · US Pacific NW · Turkey · Zambia/Zimbabwe Kariba · Egypt Aswan · out center 2000</div>
+      <p class="why">Dam way/node centroid sits on the dam WALL — 512 m bbox captures concrete wall + terrain + reservoir tail. Reservoir polygon approach was discarded: centroid lands in open water → pure-water bbox, dam structure invisible.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 20% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold threshold-cap">≤ 60% cap</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 3% (secondary)</span>
+      </div>
+      <p class="why">built_up ≥ 3% = dam concrete in frame (~26 m of dam wall). water cap ≤ 60% prevents pure-reservoir bboxes where only open water is visible (audit: 3/25 had water = 64–100% with dam invisible).</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 50 /cell</span>
+      <p class="why" style="margin-top:8px">Dam zones are uninhabited — discriminates from port/coastal water strata where both water and population can be high.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-minimum">Lowest primary_pct (water%) — dam wall most prominent, not a pure reservoir view</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Utility-scale Solar Farm -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Utility-scale Solar Farm</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">power=plant [solar]</span>
+      <span class="osm-tag">power=generator [solar]</span>
+      <div class="osm-region">Morocco Ouarzazate · India Rajasthan · USA Southwest · Chile Atacama · China Gansu/Tengger · UAE/Saudi · out center 1000</div>
+      <p class="why">Desert-only bboxes. Identical OSM tags to Agrivoltaics but the desert region selection ensures no cropland — the key differentiator between the two strata.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-bare">bare_sparse</span>
+        <span class="threshold">≥ 25% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 15% (secondary)</span>
+      </div>
+      <p class="why">Key differentiator from Industrial+Arid: that stratum requires only built_up ≥ 1%. Utility solar farms cover 15–40% of the bbox with panels (ESA classifies panel arrays as built_up).</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 100 /cell</span>
+      <p class="why" style="margin-top:8px">Solar farms are uninhabited.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (built_up%) — most panel coverage in frame</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Airport / Aviation -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">100 coords</span>
+    <span class="card-title">Airport / Aviation</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">aeroway=aerodrome [iata]</span>
+      <div class="osm-region">Global (IATA-coded airports only) · out center 2500</div>
+      <p class="why">Aerodrome boundary POLYGON centroid sits at the airfield centre — captures runway tarmac + grass safety strips in the same 512 m bbox. Old approach (terminal way centroids) put the bbox on the terminal building where grass strips were far away → 3.7% pass rate. Polygon centroid → 14.7%.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 40% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-grassland">grassland</span>
+        <span class="threshold">≥ 8% (secondary)</span>
+      </div>
+      <p class="why">Grassland lowered 12% → 8%: grass strips between runways read 8–15% at 512 m scale. Both classes present = airfield geometry confirmed.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 300 /cell</span>
+      <span class="ghsl-pill">bsurf ≥ 200 m²</span>
+      <p class="why" style="margin-top:8px">pop ≤ 300 allows city-adjacent airports (Changi, HK, CDG). bsurf ≥ 200 confirms terminal/hangar footprint present.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ LOW TIER ═══════════════════════ -->
+<div class="tier-header tier-LOW">LOW tier — 5 strata · 30 coords each (2500 run)</div>
+
+
+<!-- Agricultural + Water -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">30 coords</span>
+    <span class="card-title">Agricultural + Water</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">waterway=weir</span>
+      <span class="osm-tag">man_made=floodgate</span>
+      <span class="osm-tag">waterway=sluice_gate</span>
+      <span class="osm-tag">man_made=pumping_station</span>
+      <div class="osm-region">Nile (22,28→32,36) · Indus/Pakistan (24,67→34,74) · Mekong/SE Asia (9,100→22,108) · China Yellow River (30,110→40,125) · Mekong delta (9,104→12,107) · out 1500</div>
+      <p class="why">Nodes at the structural water-cropland boundary — weirs, sluice gates, pumping stations are the physical interface between irrigation canal and rice/wheat field.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-cropland">cropland</span>
+        <span class="threshold">≥ 25% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 12% (secondary)</span>
+      </div>
+      <p class="why">Water raised 8% → 12%: 8% admitted barely-visible irrigation channels (water just a thin strip). 12% of 512 m ≈ 31,000 m² — a canal or river section clearly visible.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-none">None</span>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (cropland%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Coastal + Agricultural -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">30 coords</span>
+    <span class="card-title">Coastal + Agricultural</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">natural=coastline</span>
+      <div class="osm-region">Philippines Ilocos/Luzon · Philippines Visayas · Vietnam central · Java north · Gulf of Thailand · Ca Mau Vietnam · Sri Lanka east · Odisha India · Taiwan west · South Korea Honam · out center 4000</div>
+      <p class="why">Myanmar (93°E) and Bangladesh Ganges mouth completely excluded — ESA "water" there = tidal channels and river distributaries (looks like ponds), not open sea. All retained bboxes are direct ocean-facing coasts with known rice cultivation. This bug was the source of inland pond anchors in earlier runs.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-cropland">cropland</span>
+        <span class="threshold">≥ 20% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 20% (secondary)</span>
+      </div>
+      <p class="why">Water raised 15% → 20%: 15% admitted estuarine/mangrove deltas with no clear open sea.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-none">None</span>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (water%) — open sea, not inland pond</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Mangrove + Industrial -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">30 coords</span>
+    <span class="card-title">Mangrove + Industrial</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">wetland=mangrove</span>
+      <div class="osm-region">Bonny Island Nigeria (LNG plant) · Warri Delta Nigeria (Shell) · Sundarbans Bangladesh (Mongla port) · Tarakan Kalimantan (oil port) · Broad SE Asia (0,108→6,119) · Gulf of Thailand (8,99→12,107) · out center 1500</div>
+      <p class="why">Mangrove IS the limiting class — querying for it directly gives 3.5× better pass rate than querying for industrial and hoping for mangrove. Targeted known co-location zones concentrate quality; broad SE Asian bboxes provide volume.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-mangrove">mangrove</span>
+        <span class="threshold">≥ 15% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 8% (secondary)</span>
+      </div>
+      <p class="why">Mangrove raised 8% → 15%: 8% admitted 3/25 candidates where mangrove was barely a fringe strip. At 15% the dark-green canopy is unambiguously visible in the 512 m frame.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 400 /cell</span>
+      <p class="why" style="margin-top:8px">Mangrove-adjacent industrial sites are low-density.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (built_up%) — most industrial structure visible at mangrove fringe</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Suburban + Agricultural -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">30 coords</span>
+    <span class="card-title">Suburban + Agricultural</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">landuse=allotments</span>
+      <span class="osm-tag">landuse=orchard</span>
+      <span class="osm-tag">landuse=vineyard</span>
+      <div class="osm-region">Punjab India · Po Valley Italy · Nile fringe Egypt · Rhine Valley Germany · Yangtze Delta China · Iberian Peninsula (Lisbon/Madrid fringe) · out center 1000</div>
+      <p class="why">Allotment ways and orchards/vineyards sit at the city-cropland edge — the exact transition zone this stratum describes. Iberian Peninsula added: Lisbon/Madrid suburban fringe meets vineyard belts.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-built_up">built_up</span>
+        <span class="threshold">≥ 15% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-cropland">cropland</span>
+        <span class="threshold">≥ 10% (secondary)</span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-pill">pop ≤ 2000 /cell</span>
+      <span class="ghsl-pill">bsurf ≥ 100 m²</span>
+      <p class="why" style="margin-top:8px">pop ≤ 2000 keeps out dense urban cores. bsurf ≥ 100 ensures actual built structures — not just a barn in a field.</p>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box">Highest primary_pct (built_up%)</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Coastal + Solar-Wind Hybrid -->
+<div class="card">
+  <div class="card-header">
+    <span class="badge badge-union">UNION</span>
+    <span class="badge badge-2500">30 coords</span>
+    <span class="card-title">Coastal + Solar-Wind Hybrid</span>
+  </div>
+  <div class="card-body">
+    <div class="col">
+      <div class="col-label">OSM entry point</div>
+      <span class="osm-tag">power=generator [wind]</span>
+      <div class="osm-region">German/Danish North Sea · Netherlands/Belgium · Swedish Kattegat · Norway coast · UK west/north · Portugal/Spain Atlantic · Japan Sea coast · South Korea coast · Tehuantepec Mexico · South Australia · out center 2500</div>
+      <p class="why">China Jiangsu + Bohai bboxes removed: offshore turbines in open tidal water → water=100%, no bare_sparse tidal flat, no coastal character. All retained zones are onshore coastal turbines with tidal flat or beach land visible.</p>
+    </div>
+    <div class="col">
+      <div class="col-label">ESA WorldCover filters</div>
+      <div class="esa-row">
+        <span class="esa-class cls-water">water</span>
+        <span class="threshold">≥ 20% (primary)</span>
+      </div>
+      <div class="esa-row">
+        <span class="esa-class cls-grassland">grassland</span>
+        <span class="threshold">≥ 3% (secondary)</span>
+      </div>
+      <p class="why">Grassland fixed from a comment/code mismatch bug (code had 5%, comment said 3%). ESA codes beach/dune/saltmarsh as grassland (class 30). 3% ≈ one 87 m strip of coastal land — enough to confirm the turbine is onshore. audit: 23/25 old results had water = 61–100% with no coastline visible (pure offshore).</p>
+    </div>
+    <div class="col">
+      <div class="col-label">GHSL gates</div>
+      <span class="ghsl-none">None</span>
+      <div class="col-label" style="margin-top:10px">Selection rule</div>
+      <div class="rule-box rule-secondary">Highest secondary_pct (grassland%) — most coastal land strip visible alongside the sea</div>
+    </div>
+  </div>
+</div>
+
+
+</body>
+</html>
