@@ -66,16 +66,16 @@ def _process_worldcover(lat, lon, min_lat, max_lat, min_lon, max_lon, result, st
 
 def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type="") -> dict:
     """
-    Extract all 6-source PORE features for a single BORE-verified coordinate.
+    Extract all PORE features for a single BORE-verified coordinate.
 
     Returns a flat dict with:
       - 6 metadata columns
       - 18 ESA WorldCover features (11 per-class %, 7 summary)
       - 3 GHSL features
       - 2 Solar Atlas features
-      - 3 VIIRS/MODIS features
+      - 3 VIIRS features
       - 13 OSM features
-    Sources: OSM, ESA WorldCover, VIIRS, GHSL, Global Solar Atlas, MS Buildings.
+    Sources: OSM, ESA WorldCover, VIIRS, GHSL, Global Solar Atlas.
 
     Null contract: absent key = no data. Never returns sentinel values.
     If an extractor fails, its keys are simply absent from the result.

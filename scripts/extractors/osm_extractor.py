@@ -397,7 +397,7 @@ def extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
 
     # ── Strip None values ──────────────────────────────────────────────────────
     # Absent key = no data — consistent with GHSL, Solar Atlas, WorldCover,
-    # ERA5, and VIIRS extractors.
+    # and VIIRS extractors.
     # osm_building_count is kept even when 0 — 0 buildings is valid information.
     features = {
         k: v for k, v in features.items()
@@ -576,7 +576,7 @@ if __name__ == "__main__":
     print("\nPower infrastructure found:")
     power_fields = [
         "osm_power_plant", "osm_power_substation", "osm_power_line",
-        "osm_power_tower", "osm_power_pole", "osm_generator_source", "osm_plant_source"
+        "osm_power_tower", "osm_generator_source", "osm_plant_source"
     ]
     for _, row in df.iterrows():
         found = [
@@ -591,8 +591,8 @@ if __name__ == "__main__":
     display_cols = [
         c for c in [
             "stratum", "osm_building_count", "osm_building_type",
-            "osm_landuse", "osm_power_plant", "osm_power_line",
-            "osm_highway", "raw_element_count"
+            "osm_landuse", "osm_waterway", "osm_power_plant", "osm_power_line",
+            "raw_element_count"
         ] if c in df.columns
     ]
     print(df[display_cols].to_string(index=False))

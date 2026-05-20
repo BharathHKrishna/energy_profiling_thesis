@@ -710,7 +710,7 @@ def main() -> None:
         "bbox_m", "remark",
     ]
     with open(OUTPUT_CSV, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(results)
 

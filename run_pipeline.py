@@ -5,6 +5,7 @@ Energy Profiling Pipeline — unified runner
   THE ONLY THING YOU EVER CHANGE:
   N_PER_STRATUM below — one number per stratum.
   Then run:  python run_pipeline.py
+  All outputs are overwritten fresh each run.
 ════════════════════════════════════════
 
 Stages (run in order):
@@ -12,6 +13,12 @@ Stages (run in order):
   2. features  → PORE feature extraction   → outputs/csv/pore_features.csv
   3. segmaps   → PORE segmentation maps    → outputs/maps/*.png
   4. captions  → Groq LLM captions        → outputs/captions/pore_captions.json
+
+Full 2500-run targets (set N_PER_STRATUM to these):
+  HIGH_union strata (Industrial+Water, Urban+Coastal, Informal+Urban):  250 each
+  HIGH_pure  strata (Dense Urban, Suburban, Industrial):                300 each
+  MID        strata (7 strata):                                         100 each
+  LOW        strata (5 strata):                                          30 each
 
 Advanced usage:
     python run_pipeline.py --stages bore features   # run specific stages only
@@ -74,7 +81,7 @@ def run_bore():
 
 
 def run_features():
-    """PORE: extract 55 features per coordinate from 6 sources."""
+    """PORE: extract features per coordinate from 5 sources."""
     logger.info("=" * 60)
     logger.info("STAGE 2 — PORE: feature extraction")
     logger.info("=" * 60)
