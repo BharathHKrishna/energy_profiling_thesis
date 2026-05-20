@@ -36,11 +36,14 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
+import fiona
 import requests as _requests
+from shapely.geometry import Point, shape
+from shapely.ops import unary_union
 
 from scripts.extractors.worldcover_extractor import extract_worldcover_features
 from scripts.extractors.ghsl_extractor       import extract_ghsl_features
-from scripts.sampling.coordinate_filter      import (
+from scripts.bore.coordinate_filter      import (
     parse_esa_classes, parse_importance_tiers, build_strata_config,
     FEATURES_HTML, BREAKDOWN_HTML,
 )
@@ -54,15 +57,53 @@ RNG_SEED         = 42
 RATE_DELAY       = 2.0   # seconds between Overpass requests
 
 # ── Scale control ─────────────────────────────────────────────────────────────
-# Change these to scale BORE output. Currently 1 per stratum (anchor validation).
-# For the full 2500 run: {"HIGH_union": 250, "HIGH_pure": 300, "MID": 100, "LOW": 30}
-# 18 strata: 3×250 + 3×300 + 7×100 + 5×30 = 2500
-N_PER_TIER: dict[str, int] = {
-    "HIGH_union": 1,
-    "HIGH_pure":  1,
-    "MID":        1,
-    "LOW":        1,
+# ── THE ONLY KNOB — set N per stratum here ───────────────────────────────────
+# Change any value to control how many verified coordinates to sample per stratum.
+# Full 2500 run targets shown in comments.
+N_PER_STRATUM: dict[str, int] = {
+    "Industrial + Water":              1,   # full: 250
+    "Urban + Coastal":                 1,   # full: 250
+    "Informal + Urban":                1,   # full: 250
+    "Dense Urban":                     1,   # full: 300
+    "Suburban":                        1,   # full: 300
+    "Industrial":                      1,   # full: 300
+    "Data Centre + Industrial":        1,   # full: 100
+    "Industrial + Arid":               1,   # full: 100
+    "Agrivoltaics (Solar + Farmland)": 1,   # full: 100
+    "Industrial + Forest":             1,   # full: 100
+    "Hydropower Reservoir":            1,   # full: 100
+    "Utility-scale Solar Farm":        1,   # full: 100
+    "Airport / Aviation":              1,   # full: 100
+    "Agricultural + Water":            1,   # full:  30
+    "Coastal + Agricultural":          1,   # full:  30
+    "Mangrove + Industrial":           1,   # full:  30
+    "Suburban + Agricultural":         1,   # full:  30
+    "Coastal + Solar-Wind Hybrid":     1,   # full:  30
 }
+
+# ── Ocean proximity filter ────────────────────────────────────────────────────
+OCEAN_SHP      = BASE / "rasters" / "natural_earth" / "ne_10m_ocean.shp"
+OCEAN_MAX_KM   = 50   # candidate must be within 50 km of the ocean polygon edge
+
+def _load_ocean_union():
+    """Load Natural Earth ocean polygon and return a single unioned geometry."""
+    with fiona.open(OCEAN_SHP) as src:
+        return unary_union([shape(f["geometry"]) for f in src])
+
+# Loaded once at import time; skips gracefully if file missing (non-coastal runs).
+try:
+    _OCEAN_UNION = _load_ocean_union()
+except Exception as _e:
+    _OCEAN_UNION = None
+    print(f"[WARN] Ocean shapefile not loaded ({_e}); ocean-proximity check disabled.")
+
+def _is_near_ocean(lat: float, lon: float, max_km: float = OCEAN_MAX_KM) -> bool:
+    """True if (lat, lon) is within max_km of the ocean polygon boundary."""
+    if _OCEAN_UNION is None:
+        return True   # fail-open: don't block if shapefile missing
+    # Point is INSIDE the ocean polygon → distance() returns 0 → always passes
+    # Point is OUTSIDE → distance() is degrees; 1° ≈ 111 km
+    return Point(lon, lat).distance(_OCEAN_UNION) * 111 < max_km
 
 
 # ── Per-stratum OSM entry queries ─────────────────────────────────────────────
@@ -590,6 +631,9 @@ def find_anchors(sc: dict, importance: str, stratum_rng: random.Random,
         if _too_close(lat, lon, found):
             continue
 
+        if sc.get("requires_ocean") and not _is_near_ocean(lat, lon):
+            continue
+
         found.append(_build_result(sc, importance, el, pcts, ghsl, tried))
 
     got  = len(found)
@@ -637,14 +681,13 @@ def main() -> None:
                 existing.setdefault(row["stratum_name"], []).append(row)
 
     def _quota(sc: dict) -> int:
-        key = sc.get("tier_key") or imp_lower.get(sc["name"].lower(), "LOW")
-        return N_PER_TIER.get(key, 1)
+        return N_PER_STRATUM.get(sc["name"], 1)
 
     total_quota = sum(_quota(sc) for sc in strata_config)
 
     print(f"Anchor search — {len(strata_config)} strata  "
           f"target={total_quota} coordinates  "
-          f"(N_PER_TIER={N_PER_TIER})\n")
+          f"(N_PER_STRATUM={N_PER_STRATUM})\n")
 
     results = []
     for idx, sc in enumerate(strata_config):

@@ -24,23 +24,18 @@ BASE = "/srv/THESIS/energy_profiling_thesis"
 SOLAR_PATHS = {
     "pvout": os.path.join(BASE, config["rasters"]["global_solar_atlas"]["pvout"]),
     "ghi":   os.path.join(BASE, config["rasters"]["global_solar_atlas"]["ghi"]),
-    "dni":   os.path.join(BASE, config["rasters"]["global_solar_atlas"]["dni"]),
 }
 
 # ── Physical valid ranges per layer ───────────────────────────────────────────
-# Values outside these ranges are physically impossible — treat as nodata.
-# Source: Global Solar Atlas documentation + PVGIS technical documentation
 SOLAR_VALID_RANGES = {
-    "pvout": (0.01, 12.0),   
+    "pvout": (0.01, 12.0),
     "ghi":   (0.01, 12.0),
-    "dni":   (0.01, 12.0),
 }
 
 # ── Output feature names ───────────────────────────────────────────────────────
 SOLAR_FEATURE_NAMES = {
     "pvout": "solar_pvout_kwh_kwp_day",
     "ghi":   "solar_ghi_kwh_m2_day",
-    "dni":   "solar_dni_kwh_m2_day",
 }
 
 
@@ -106,9 +101,8 @@ def extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     Extract all 3 Solar Atlas features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
-        solar_pvout_kwh_kwp_yr  — photovoltaic power output potential
-        solar_ghi_kwh_m2_yr     — global horizontal irradiance
-        solar_dni_kwh_m2_yr     — direct normal irradiance
+        solar_pvout_kwh_kwp_day  — photovoltaic power output potential
+        solar_ghi_kwh_m2_day     — global horizontal irradiance
 
     Any feature without valid data is absent from the returned dict.
     Never returns nodata sentinel values.
@@ -130,7 +124,7 @@ def extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
 
     populated = len(features)
     logger.info(
-        f"Solar Atlas ({lat}, {lon}): {populated}/3 features populated — "
+        f"Solar Atlas ({lat}, {lon}): {populated}/2 features populated — "
         f"{list(features.keys())}"
     )
 

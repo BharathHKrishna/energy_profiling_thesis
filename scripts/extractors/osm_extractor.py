@@ -13,7 +13,7 @@ from collections import Counter
 from scripts.utils.logger import get_logger
 from scripts.utils.config_loader import load_config
 
-logger = get_logger("osm_query")
+logger = get_logger("osm_extractor")
 config = load_config("/srv/THESIS/energy_profiling_thesis/configs/config.yaml")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -22,13 +22,15 @@ REQUEST_DELAY = config.get("api", {}).get("overpass_request_delay", 1.5)
 MAX_RETRIES   = config.get("api", {}).get("overpass_max_retries", 3)
 TIMEOUT       = config.get("api", {}).get("overpass_timeout", 30)
 
-# Mirror list — kumi.systems first because overpass-api.de returns 406 on this IP.
-# overpass-api.de kept as last-resort in case IP situation changes.
+# Mirror list — per-mirror independent circuit breakers.
+# lz4/z.overpass-api.de return non-200 from this server environment.
+# overpass.openstreetmap.ru has connect timeouts. kumi.systems is the only reliable mirror.
+# List kept extensible: add more mirrors here if connectivity improves.
 OVERPASS_MIRRORS = [
     "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    OVERPASS_URL,
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
 ]
 
 _OVERPASS_HEADERS = {
@@ -36,10 +38,10 @@ _OVERPASS_HEADERS = {
     "Accept":       "application/json, */*",
 }
 
-# Circuit breaker: after all mirrors fail, skip OSM for this many seconds.
-# Prevents 8+ minutes of wasted retries when the network blocks Overpass.
-_OVERPASS_CIRCUIT_TIMEOUT_S = 300   # 5 minutes
-_overpass_unreachable_until  = 0.0  # epoch timestamp; 0 = circuit closed
+# Per-mirror circuit breakers: mirror_url → epoch timestamp when breaker expires.
+# Replaces the single global breaker — a dead mirror no longer blocks healthy ones.
+_OVERPASS_CIRCUIT_TIMEOUT_S = 60
+_mirror_unreachable_until: dict = {}  # populated on first failure
 
 # Per-process response cache keyed by bbox tuple.
 # extract_osm_features and get_osm_energy_elements share the same query —
@@ -47,11 +49,24 @@ _overpass_unreachable_until  = 0.0  # epoch timestamp; 0 = circuit closed
 _overpass_cache: dict = {}
 
 
+def circuit_breaker_wait():
+    """Block until at least one mirror's circuit breaker has expired."""
+    now = time.time()
+    available = [m for m in OVERPASS_MIRRORS if now >= _mirror_unreachable_until.get(m, 0.0)]
+    if available:
+        return
+    earliest = min(_mirror_unreachable_until.get(m, 0.0) for m in OVERPASS_MIRRORS)
+    remaining = earliest - now
+    if remaining > 0:
+        logger.info(f"Waiting {remaining:.0f}s for Overpass circuit breaker to expire...")
+        time.sleep(remaining + 1)
+
+
 # ── Bounding Box Helper ───────────────────────────────────────────────────────
 
-def generate_bbox(lat, lon, size_m=256):
+def generate_bbox(lat, lon, size_m=512):
     """
-    Generate a 256×256m bounding box centred on (lat, lon).
+    Generate a 512×512m bounding box centred on (lat, lon).
     Same logic as stratified_sampler.py — must stay consistent.
     """
     delta_lat = (size_m / 2) / 111320
@@ -66,26 +81,51 @@ def generate_bbox(lat, lon, size_m=256):
 
 # ── Query Builder ─────────────────────────────────────────────────────────────
 
-def build_overpass_query(min_lat, max_lat, min_lon, max_lon):
+def build_overpass_query(min_lat, max_lat, min_lon, max_lon, segmap=False):
     """
-    Build Overpass QL query to fetch all energy-relevant OSM features
-    within a 256×256m bounding box.
+    Build Overpass QL query to fetch energy-relevant OSM features
+    within a 512×512m bounding box.
 
-    Overpass bbox format: south, west, north, east
-                        = min_lat, min_lon, max_lat, max_lon
-
-    Features covered:
-      Buildings     — type, height, material, count, start_date,
-                      roof shape/material/colour
-      Power         — plant, substation, line, tower, pole,
-                      generator:source, plant:source
-      Land          — landuse, surface, highway, railway
-      Industrial    — pipeline, petroleum_well, storage_tank, dam
-      Amenities     — hospital, school, charging_station, supermarket
+    segmap=True  — lean visual-only query (buildings + energy infra + aeroway).
+                   Drops highways, amenities, supermarkets that BORE needs but
+                   the segmap doesn't render, cutting payload ~60%.
+    segmap=False — full BORE feature-extraction query (default, unchanged).
     """
     bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
 
-    query = f"""
+    if segmap:
+        query = f"""
+[out:json][timeout:{TIMEOUT}];
+(
+  node["building"]({bbox});
+  way["building"]({bbox});
+  relation["building"]({bbox});
+  node["power"]({bbox});
+  way["power"]({bbox});
+  node["generator:source"]({bbox});
+  way["generator:source"]({bbox});
+  node["plant:source"]({bbox});
+  way["plant:source"]({bbox});
+  way["landuse"~"solar_farm|industrial"]({bbox});
+  node["man_made"="pipeline"]({bbox});
+  way["man_made"="pipeline"]({bbox});
+  node["man_made"="petroleum_well"]({bbox});
+  node["man_made"="storage_tank"]({bbox});
+  way["man_made"="storage_tank"]({bbox});
+  node["man_made"="wind_turbine"]({bbox});
+  way["man_made"="wind_turbine"]({bbox});
+  node["man_made"="cooling_tower"]({bbox});
+  way["man_made"="cooling_tower"]({bbox});
+  node["man_made"="chimney"]({bbox});
+  way["man_made"="chimney"]({bbox});
+  node["waterway"="dam"]({bbox});
+  way["waterway"="dam"]({bbox});
+  way["aeroway"]({bbox});
+);
+out geom;
+"""
+    else:
+        query = f"""
 [out:json][timeout:{TIMEOUT}];
 (
   way["building"]({bbox});
@@ -97,23 +137,12 @@ def build_overpass_query(min_lat, max_lat, min_lon, max_lon):
   node["plant:source"]({bbox});
   way["plant:source"]({bbox});
   way["landuse"]({bbox});
-  node["man_made"="pipeline"]({bbox});
-  way["man_made"="pipeline"]({bbox});
-  node["man_made"="petroleum_well"]({bbox});
-  node["man_made"="storage_tank"]({bbox});
-  way["man_made"="storage_tank"]({bbox});
-  node["waterway"="dam"]({bbox});
-  way["waterway"="dam"]({bbox});
-  way["highway"]({bbox});
-  way["railway"]({bbox});
+  node["waterway"]({bbox});
+  way["waterway"]({bbox});
   node["amenity"~"hospital|school|charging_station"]({bbox});
   way["amenity"~"hospital|school|charging_station"]({bbox});
-  node["shop"="supermarket"]({bbox});
-  way["shop"="supermarket"]({bbox});
 );
-out body;
->;
-out skel qt;
+out geom;
 """
     return query.strip()
 
@@ -137,17 +166,22 @@ def send_overpass_request(query, overpass_url=None):
     """
     import time as _t
     import concurrent.futures
-    global _overpass_unreachable_until, _overpass_cache
+    global _mirror_unreachable_until, _overpass_cache
 
     if query in _overpass_cache:
         return _overpass_cache[query]
 
-    if _t.time() < _overpass_unreachable_until:
-        logger.info("Overpass circuit breaker active — returning empty (will retry after cooldown)")
-        return []
+    # Use only mirrors not currently in their individual circuit breaker
+    if overpass_url:
+        mirrors = [overpass_url]
+    else:
+        now = _t.time()
+        mirrors = [m for m in OVERPASS_MIRRORS if now >= _mirror_unreachable_until.get(m, 0.0)]
+        if not mirrors:
+            logger.info("All Overpass mirrors in circuit breaker — returning empty")
+            return []
 
-    mirrors = [overpass_url] if overpass_url else list(OVERPASS_MIRRORS)
-    _MIRROR_TIMEOUT = 12  # per-mirror timeout in seconds
+    _MIRROR_TIMEOUT = 45  # per-mirror timeout — allow server up to 45s before giving up
 
     def _try_mirror(url):
         resp = requests.post(
@@ -162,30 +196,39 @@ def send_overpass_request(query, overpass_url=None):
 
     elements = None
     winning_url = None
+    failed_mirrors = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(mirrors)) as pool:
         futures = {pool.submit(_try_mirror, url): url for url in mirrors}
         try:
             for future in concurrent.futures.as_completed(futures, timeout=_MIRROR_TIMEOUT + 2):
+                url = futures[future]
                 try:
-                    url, result = future.result()
+                    _, result = future.result()
                     if result is not None:
                         elements    = result
                         winning_url = url
-                        break  # cancel remaining — first 200 wins
+                        break  # first 200 wins
+                    else:
+                        failed_mirrors.append(url)
+                        logger.warning(f"Mirror {url} error: non-200 response")
                 except Exception as exc:
-                    logger.warning(f"Mirror {futures[future]} error: {exc}")
+                    failed_mirrors.append(url)
+                    logger.warning(f"Mirror {url} error: {exc}")
         except concurrent.futures.TimeoutError:
+            failed_mirrors.extend(futures.values())
             logger.warning("All mirrors timed out in parallel race")
+
+    # Open per-mirror circuit breakers only for mirrors that actually failed
+    for url in failed_mirrors:
+        _mirror_unreachable_until[url] = _t.time() + _OVERPASS_CIRCUIT_TIMEOUT_S
 
     if elements is not None:
         logger.info(f"Overpass OK [{winning_url}] — {len(elements)} elements")
-        _overpass_unreachable_until = 0.0
+        _mirror_unreachable_until[winning_url] = 0.0  # reset winning mirror's breaker
         _overpass_cache[query] = elements
         return elements
 
-    # All mirrors failed — open circuit breaker
-    _overpass_unreachable_until = time.time() + _OVERPASS_CIRCUIT_TIMEOUT_S
     logger.error(f"All Overpass mirrors failed — circuit breaker opened for {_OVERPASS_CIRCUIT_TIMEOUT_S}s")
     return []
 
@@ -212,19 +255,11 @@ def parse_osm_response(elements):
     power_substations = []
     power_lines       = []
     power_towers      = []
-    power_poles       = []
     generator_sources = []
     plant_sources     = []
     landuses          = []
-    pipelines         = []
-    petroleum_wells   = []
-    storage_tanks     = []
-    dams              = []
-    highways          = []
-    railways          = []
+    waterways         = []
     amenities         = []
-    supermarkets      = []
-    surfaces          = []
 
     for el in elements:
         tags = el.get("tags", {})
@@ -245,8 +280,6 @@ def parse_osm_response(elements):
             power_lines.append(tags)
         elif power_val == "tower":
             power_towers.append(tags)
-        elif power_val == "pole":
-            power_poles.append(tags)
 
         # ── Generator and plant sources ───────────────────────────────────────
         if "generator:source" in tags:
@@ -258,37 +291,14 @@ def parse_osm_response(elements):
         if "landuse" in tags:
             landuses.append(tags["landuse"])
 
-        # ── Man-made infrastructure ───────────────────────────────────────────
-        man_made = tags.get("man_made")
-        if man_made == "pipeline":
-            pipelines.append(tags)
-        elif man_made == "petroleum_well":
-            petroleum_wells.append(tags)
-        elif man_made == "storage_tank":
-            storage_tanks.append(tags)
-
-        # ── Dam ───────────────────────────────────────────────────────────────
-        if tags.get("waterway") == "dam":
-            dams.append(tags)
-
-        # ── Transport ─────────────────────────────────────────────────────────
-        if "highway" in tags:
-            highways.append(tags["highway"])
-        if "railway" in tags:
-            railways.append(tags["railway"])
+        # ── Waterway ──────────────────────────────────────────────────────────
+        if "waterway" in tags:
+            waterways.append(tags["waterway"])
 
         # ── Amenities ─────────────────────────────────────────────────────────
         amenity_val = tags.get("amenity")
         if amenity_val in ("hospital", "school", "charging_station"):
             amenities.append(amenity_val)
-
-        # ── Supermarket ───────────────────────────────────────────────────────
-        if tags.get("shop") == "supermarket":
-            supermarkets.append(tags)
-
-        # ── Surface ───────────────────────────────────────────────────────────
-        if "surface" in tags:
-            surfaces.append(tags["surface"])
 
     # ── Helper functions ──────────────────────────────────────────────────────
 
@@ -319,67 +329,36 @@ def parse_osm_response(elements):
         if b.get("building") not in (None, "yes")
     ]
 
-    building_heights = []
-    for b in buildings:
-        raw_h      = b.get("height")
-        raw_levels = b.get("building:levels")
-        if raw_h:
-            try:
-                val = float(str(raw_h).replace("m", "").replace(" ", "").strip())
-                building_heights.append(val)
-            except ValueError:
-                pass
-        elif raw_levels:
-            try:
-                val = float(str(raw_levels).strip()) * 3.0
-                building_heights.append(val)
-            except ValueError:
-                pass
-
-    building_materials   = [b.get("building:material") for b in buildings if b.get("building:material")]
-    building_start_dates = [b.get("start_date")        for b in buildings if b.get("start_date")]
-    roof_shapes          = [b.get("roof:shape")         for b in buildings if b.get("roof:shape")]
-    roof_materials       = [b.get("roof:material")      for b in buildings if b.get("roof:material")]
-    roof_colours         = [b.get("roof:colour")        for b in buildings if b.get("roof:colour")]
+    building_start_dates = [b.get("start_date")   for b in buildings if b.get("start_date")]
+    roof_shapes          = [b.get("roof:shape")    for b in buildings if b.get("roof:shape")]
+    roof_materials       = [b.get("roof:material") for b in buildings if b.get("roof:material")]
+    roof_colours         = [b.get("roof:colour")   for b in buildings if b.get("roof:colour")]
 
     # ── Final feature dict ────────────────────────────────────────────────────
     features = {
 
         # ── Building ──────────────────────────────────────────────────────────
-        "osm_building_count":       len(buildings),
-        "osm_building_type":        most_common(building_types),
-        "osm_building_height_mean": round(sum(building_heights) / len(building_heights), 2)
-                                    if building_heights else None,
-        "osm_building_material":    most_common(building_materials),
-        "osm_building_start_date":  min(building_start_dates) if building_start_dates else None,
-        "osm_roof_shape":           most_common(roof_shapes),
-        "osm_roof_material":        most_common(roof_materials),
-        "osm_roof_colour":          most_common(roof_colours),
+        "osm_building_count":      len(buildings),
+        "osm_building_type":       most_common(building_types),
+        "osm_building_start_date": min(building_start_dates) if building_start_dates else None,
+        "osm_roof_shape":          most_common(roof_shapes),
+        "osm_roof_material":       most_common(roof_materials),
+        "osm_roof_colour":         most_common(roof_colours),
 
-        # ── Power infrastructure ───────────────────────────────────────────────
-        "osm_power_plant":          presence(power_plants),
-        "osm_power_substation":     presence(power_substations),
-        "osm_power_line":           presence(power_lines),
-        "osm_power_tower":          presence(power_towers),
-        "osm_power_pole":           presence(power_poles),
-        "osm_generator_source":     unique_joined(generator_sources),
-        "osm_plant_source":         unique_joined(plant_sources),
+        # ── Power infrastructure ──────────────────────────────────────────────
+        "osm_power_plant":         presence(power_plants),
+        "osm_power_substation":    presence(power_substations),
+        "osm_power_line":          presence(power_lines),
+        "osm_power_tower":         presence(power_towers),
+        "osm_generator_source":    unique_joined(generator_sources),
+        "osm_plant_source":        unique_joined(plant_sources),
 
-        # ── Land and transport ────────────────────────────────────────────────
-        "osm_landuse":              most_common(landuses),
-        "osm_highway":              most_common(highways),
-        "osm_surface":              most_common(surfaces),
-        "osm_railway":              presence(railways),
-
-        # ── Industrial / energy specific ──────────────────────────────────────
-        "osm_pipeline":             presence(pipelines),
-        "osm_petroleum_well":       presence(petroleum_wells),
-        "osm_storage_tank":         presence(storage_tanks),
-        "osm_dam":                  presence(dams),
+        # ── Land and water ────────────────────────────────────────────────────
+        "osm_landuse":             most_common(landuses),
+        "osm_waterway":            most_common(waterways),
 
         # ── Amenities ────────────────────────────────────────────────────────
-        "osm_amenity":              unique_joined(amenities),
-        "osm_supermarket":          presence(supermarkets),
+        "osm_amenity":             unique_joined(amenities),
     }
 
     return features

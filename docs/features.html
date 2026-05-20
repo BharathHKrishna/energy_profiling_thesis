@@ -1,14 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Energy & Geospatial Features Master Table</title></head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energy &amp; Geospatial Features Master Table</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; color: #0f172a; padding: 2rem 1.5rem; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { margin-bottom: 2rem; }
+        .header h1 { font-size: 1.9rem; font-weight: 700; background: linear-gradient(135deg, #1e3c72, #2b4c7c); -webkit-background-clip: text; background-clip: text; color: transparent; letter-spacing: -0.3px; display: inline-block; }
+        .badge-container { display: flex; gap: 0.8rem; flex-wrap: wrap; margin: 1rem 0 0.5rem 0; }
+        .badge { background: white; border-radius: 40px; padding: 0.25rem 1rem; font-size: 0.75rem; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .badge i { margin-right: 6px; font-size: 0.7rem; color: #2c6e9e; }
+        .stats { display: flex; gap: 1.2rem; margin-top: 0.8rem; font-size: 0.85rem; color: #334155; background: #eef2ff; padding: 0.6rem 1.2rem; border-radius: 60px; width: fit-content; }
+        .table-wrapper { overflow-x: auto; border-radius: 24px; background: white; box-shadow: 0 8px 20px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.02); border: 1px solid #e9edf2; }
+        .feature-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 950px; }
+        .feature-table th { text-align: left; padding: 1rem 1rem; background: #f8fafc; font-weight: 600; color: #1e293b; border-bottom: 1px solid #e2e8f0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .feature-table td { padding: 1rem 1rem; border-bottom: 1px solid #ecf3f9; vertical-align: top; background-color: white; }
+        .feature-table tr:hover td { background-color: #fefce8; }
+        .category-tag { display: inline-block; background: #eef2ff; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; color: #1e40af; margin-bottom: 6px; }
+        .example-code { font-family: 'SF Mono', 'Fira Code', monospace; background: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 8px; font-size: 0.8rem; display: inline-block; margin: 2px 0; color: #0c4a6e; }
+        .subnote { font-size: 0.7rem; color: #475569; margin-top: 4px; }
+        footer { margin-top: 2.5rem; text-align: center; font-size: 0.75rem; color: #5b6e8c; border-top: 1px solid #e2e8f0; padding-top: 1.8rem; }
+        @media (max-width: 700px) { body { padding: 1rem; } .feature-table th, .feature-table td { padding: 0.75rem; } }
+    </style>
+</head>
 <body>
-<table class="feature-table">
-<tbody>
-<tr><td>16</td><td><span class="category-tag">ESA</span> WorldCover Land Cover</td>
-<td>GeoTIFF (10m resolution). Integer class codes (10–100) based on FAO LCCS.</td>
-<td><span class="example-code">20 = Shrubs</span>
-<div class="subnote"><strong>Meaning:</strong> Woody vegetation 0.5–5m tall. Full legend: 10=Trees, 20=Shrubs, 30=Grassland, 40=Cropland, 50=Built-up, 60=Bare, 80=Water.</div></td></tr>
-</tbody>
-</table>
+<div class="container">
+    <div class="header">
+        <h1><i class="fas fa-globe-europe" style="color: #2c6e9e; margin-right: 10px;"></i> Geospatial &amp; Energy Features</h1>
+        <div class="badge-container">
+            <span class="badge"><i class="fas fa-map"></i> OSM (13)</span>
+            <span class="badge"><i class="fas fa-microchip"></i> Microsoft (1)</span>
+            <span class="badge"><i class="fas fa-leaf"></i> ESA WorldCover (1)</span>
+            <span class="badge"><i class="fas fa-chart-line"></i> VIIRS (3)</span>
+            <span class="badge"><i class="fas fa-city"></i> GHSL (3)</span>
+            <span class="badge"><i class="fas fa-sun"></i> Global Solar Atlas (2)</span>
+        </div>
+        <div class="stats">
+            <span><i class="fas fa-table-list"></i> Total features: 23</span>
+            <span><i class="fas fa-database"></i> Raw data formats: GeoJSON, GeoTIFF, NetCDF, HDF5, XML/JSON</span>
+            <span><i class="fas fa-chart-simple"></i> Real examples included</span>
+        </div>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="feature-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Feature / Dataset</th>
+                    <th>What Raw Data / Metadata Looks Like</th>
+                    <th>Real Example (Word or Number)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- OSM SECTION -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-map-marked-alt"></i> OpenStreetMap (OSM) Features</td></tr>
+                <tr><td>1</td><td><span class="category-tag">OSM</span> Building (Type)</td><td>XML/JSON tag: <code>building=*</code> with classification of building purpose/function.</td><td><span class="example-code">building = commercial</span><br><span class="example-code">building = industrial</span><br><span class="example-code">building = residential</span></td></tr>
+                <tr><td>2</td><td><span class="category-tag">OSM</span> Start Date</td><td>Key <code>start_date</code> in ISO 8601 (YYYY-MM-DD).</td><td><span class="example-code">start_date = 1998-06-15</span></td></tr>
+                <tr><td>3</td><td><span class="category-tag">OSM</span> Roof Shape</td><td><code>roof:shape</code> with geometry descriptor: gabled, flat, pyramidal, hipped, etc.</td><td><span class="example-code">roof:shape = gabled</span></td></tr>
+                <tr><td>4</td><td><span class="category-tag">OSM</span> Roof Material</td><td><code>roof:material</code> — tile, metal, asphalt, concrete, etc.</td><td><span class="example-code">roof:material = tile</span></td></tr>
+                <tr><td>5</td><td><span class="category-tag">OSM</span> Roof Color</td><td><code>roof:color</code> (color name or hex code).</td><td><span class="example-code">roof:color = red</span> &nbsp;|&nbsp; <span class="example-code">#8B4513</span></td></tr>
+                <tr><td>6</td><td><span class="category-tag">OSM</span> Generator</td><td>Tags: <code>generator:source</code> (solar, wind, gas), <code>generator:output:electricity</code> (capacity).</td><td><span class="example-code">generator:source = solar</span><br><span class="example-code">generator:output:electricity = 50 kW</span></td></tr>
+                <tr><td>7</td><td><span class="category-tag">OSM</span> Power Substation</td><td><code>power = substation</code>. Metadata: voltage (volts), operator, substation type.</td><td><span class="example-code">power = substation</span><br><span class="example-code">voltage = 110000</span></td></tr>
+                <tr><td>8</td><td><span class="category-tag">OSM</span> Power Line</td><td><code>power = line</code> or <code>cable</code>. Metadata: voltage, conductor type, circuits.</td><td><span class="example-code">power = line</span><br><span class="example-code">voltage = 380000</span></td></tr>
+                <tr><td>9</td><td><span class="category-tag">OSM</span> Land Use</td><td><code>landuse = *</code> classification: residential, industrial, agricultural, forest, etc.</td><td><span class="example-code">landuse = residential</span></td></tr>
+                <tr><td>10</td><td><span class="category-tag">OSM</span> Amenity</td><td><code>amenity = *</code> for facilities: school, hospital, charging station.</td><td><span class="example-code">amenity = school</span></td></tr>
+                <tr><td>11</td><td><span class="category-tag">OSM</span> Plant Source (Power Plant)</td><td><code>power = plant</code> + <code>plant:source</code> (wind, solar, gas, hydro).</td><td><span class="example-code">power = plant</span><br><span class="example-code">plant:source = wind</span></td></tr>
+                <tr><td>12</td><td><span class="category-tag">OSM</span> Waterway</td><td><code>waterway = *</code> : river, canal, stream, drainage ditch, dam.</td><td><span class="example-code">waterway = river</span></td></tr>
+                <tr><td>13</td><td><span class="category-tag">OSM</span> Power Tower</td><td><code>power = tower</code>. Metadata: height, structure (lattice, monopole), voltage.</td><td><span class="example-code">power = tower</span><br><span class="example-code">height = 55</span></td></tr>
+
+                <!-- ESA WorldCover -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-globe-americas"></i> ESA WorldCover</td></tr>
+                <tr><td>14</td><td><span class="category-tag">ESA</span> WorldCover Land Cover</td><td>GeoTIFF (10m resolution). Integer class codes (10–100) based on FAO LCCS.</td><td><span class="example-code">20 = Shrubs</span><div class="subnote"><strong>Meaning:</strong> Woody vegetation 0.5–5m tall. Full legend: 10=Trees, 20=Shrubs, 30=Grassland, 40=Cropland, 50=Built-up, 60=Bare, 80=Water.</div></td></tr>
+
+                <!-- VIIRS -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-satellite-dish"></i> VIIRS (Visible Infrared Imaging Radiometer Suite)</td></tr>
+                <tr><td>15</td><td><span class="category-tag">VIIRS</span> NDVI (Normalized Difference Vegetation Index)</td><td>HDF5/GeoTIFF. Scaled ×10,000; range -1 to 1. NDVI = (NIR-Red)/(NIR+Red).</td><td><span class="example-code">0.6543</span><div class="subnote">Dense vegetation / healthy cover</div></td></tr>
+                <tr><td>16</td><td><span class="category-tag">VIIRS</span> DNB Radiance (Day/Night Band)</td><td>HDF5/GeoTIFF. Nighttime lights radiance in nW/cm²/sr.</td><td><span class="example-code">12.45 nW/cm²/sr</span></td></tr>
+                <tr><td>17</td><td><span class="category-tag">VIIRS</span> Surface Reflectance</td><td>Atmospherically corrected reflectance scaled ×10,000. Bands M3–M11, quality flags.</td><td><span class="example-code">2,845</span> = 28.45% reflectance</td></tr>
+
+                <!-- GHSL -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-building"></i> Global Human Settlement Layer (GHSL)</td></tr>
+                <tr><td>18</td><td><span class="category-tag">GHSL</span> GHS-BUILT-S (Built-up Surface)</td><td>GeoTIFF binary: 0 = no built-up, 1 = built-up presence. Resolution: 10m/38m.</td><td><span class="example-code">1</span> = Built-up present</td></tr>
+                <tr><td>19</td><td><span class="category-tag">GHSL</span> GHS-BUILT-H (Built-up Height)</td><td>GeoTIFF with estimated building height in meters. Derived from Sentinel-1/2 &amp; ML models.</td><td><span class="example-code">8.5 meters</span></td></tr>
+                <tr><td>20</td><td><span class="category-tag">GHSL</span> GHS-POP (Population Density)</td><td>GeoTIFF raster: persons per km². Resolution 100m/1km, reference year 2020.</td><td><span class="example-code">1,245 people/km²</span></td></tr>
+
+                <!-- Global Solar Atlas -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-solar-panel"></i> Global Solar Atlas</td></tr>
+                <tr><td>21</td><td><span class="category-tag">Solar Atlas</span> PVOUT (PV Power Output)</td><td>GeoTIFF, 1km resolution. Long-term avg (1999-2020). Units: kWh/kWp/year.</td><td><span class="example-code">1,450 kWh/kWp/year</span></td></tr>
+                <tr><td>22</td><td><span class="category-tag">Solar Atlas</span> GHI (Global Horizontal Irradiance)</td><td>GeoTIFF, kWh/m²/year. Total solar radiation on horizontal surface.</td><td><span class="example-code">1,850 kWh/m²/year</span></td></tr>
+
+                <!-- MICROSOFT -->
+                <tr><td colspan="4" style="background:#f1f5f9; font-weight:700;"><i class="fas fa-microchip"></i> Microsoft Global ML Building Footprints</td></tr>
+                <tr><td>23</td><td><span class="category-tag">Microsoft ML</span> Building Footprints</td>
+                <td>Worldwide vector dataset derived from high-resolution satellite imagery using computer vision (CNN on Bing Maps). Available as GeoJSON/GeoJSONL. 1.4 billion building footprints globally. Free and open under ODbL license.</td>
+                <td><span class="example-code">Building footprint polygon (GeoJSON: geographic coordinates outlining the roof)</span><div class="subnote"><strong>Energy relevance:</strong> Essential for cross-validating building stock from OSM and GHSL. Fills coverage gaps in Sub-Saharan Africa, rural Asia, and informal settlements where OSM volunteer mapping is sparse.</div></td></tr>
+
+            </tbody>
+        </table>
+    </div>
+
+    <footer>
+        <i class="fas fa-info-circle"></i> 23 features across 5 sources: OSM (13), Microsoft ML (1), ESA WorldCover (1), VIIRS (3), GHSL (3), Global Solar Atlas (2).<br>
+        Raw data formats: GeoJSON, GeoTIFF, HDF5, XML/JSON.
+    </footer>
+</div>
 </body>
 </html>

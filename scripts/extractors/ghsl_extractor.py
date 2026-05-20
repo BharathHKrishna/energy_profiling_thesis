@@ -23,32 +23,17 @@ GHSL_PATHS = {
     "built_surface":   os.path.join(BASE, config["rasters"]["ghsl"]["built_surface"]),
     "building_height": os.path.join(BASE, config["rasters"]["ghsl"]["building_height"]),
     "population":      os.path.join(BASE, config["rasters"]["ghsl"]["population"]),
-    "degurba":         os.path.join(BASE, config["rasters"]["ghsl"]["degurba"]),
 }
 
 # ── GHSL uses Mollweide projection ESRI:54009 ──────────────────────────────────
 # We must reproject bbox from WGS84 to Mollweide before sampling
 TRANSFORMER_TO_MOLL = Transformer.from_crs("EPSG:4326", "ESRI:54009", always_xy=True)
 
-# ── DEGURBA class labels ───────────────────────────────────────────────────────
-# Source: JRC GHSL DEGURBA documentation
-DEGURBA_LABELS = {
-    11: "dense_urban_centre",
-    12: "semi_dense_urban_cluster",
-    13: "suburban_or_peri_urban",
-    21: "village",
-    22: "dispersed_rural",
-    23: "mostly_uninhabited",
-    30: "water",
-}
-
 # ── Nodata values per layer ────────────────────────────────────────────────────
-# Source: GHSL product documentation
 GHSL_NODATA = {
-    "built_surface":   -200.0,   # nodata sentinel in GHS-BUILT-S
-    "building_height": -200.0,   # nodata sentinel in GHS-BUILT-H
-    "population":      -200.0,   # nodata sentinel in GHS-POP
-    "degurba":         255,      # nodata sentinel in GHS-SMOD
+    "built_surface":   -200.0,
+    "building_height": -200.0,
+    "population":      -200.0,
 }
 
 
@@ -201,13 +186,12 @@ def sample_degurba(min_lat, max_lat, min_lon, max_lon):
 
 def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Extract all 4 GHSL features for a 512×512m bounding box.
+    Extract GHSL features for a 512×512m bounding box.
 
     Returns a flat dict with keys:
         ghsl_built_surface_m2    — mean built-up surface area (m²) per 100m cell
         ghsl_building_height_m   — mean building height (metres)
         ghsl_population_per_km2  — mean population density (persons/km²)
-        ghsl_degurba_class       — urbanisation class label (string)
 
     Any feature without valid data is simply absent from the returned dict.
     Never returns nodata sentinel values.
@@ -231,14 +215,9 @@ def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     if pop is not None:
         features["ghsl_population_per_km2"] = pop
 
-    # ── DEGURBA urbanisation class ────────────────────────────────────────────
-    degurba = sample_degurba(min_lat, max_lat, min_lon, max_lon)
-    if degurba is not None:
-        features["ghsl_degurba_class"] = degurba
-
     populated = len(features)
     logger.info(
-        f"GHSL ({lat}, {lon}): {populated}/4 features populated — "
+        f"GHSL ({lat}, {lon}): {populated}/3 features populated — "
         f"{list(features.keys())}"
     )
 

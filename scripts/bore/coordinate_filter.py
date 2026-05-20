@@ -107,13 +107,15 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
           tier_key=None,
           primary_hi=None,
           pop_lo=None, pop_hi=None, h_lo=None, h_hi=None,
-          bsurf_lo=None, bsurf_hi=None):
+          bsurf_lo=None, bsurf_hi=None,
+          requires_ocean=False):
         return dict(name=name, kind="union", tier_key=tier_key,
                     primary=pri,  primary_min=pri_min, primary_hi=primary_hi,
                     secondary=sec, secondary_min=sec_min,
                     pop_lo=pop_lo, pop_hi=pop_hi,
                     h_lo=h_lo, h_hi=h_hi,
-                    bsurf_lo=bsurf_lo, bsurf_hi=bsurf_hi)
+                    bsurf_lo=bsurf_lo, bsurf_hi=bsurf_hi,
+                    requires_ocean=requires_ocean)
 
     def p(name, pri, pri_min,
           tier_key=None,
@@ -125,7 +127,8 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
                     secondary=None, secondary_min=None,
                     pop_lo=pop_lo, pop_hi=pop_hi,
                     h_lo=h_lo, h_hi=h_hi,
-                    bsurf_lo=bsurf_lo, bsurf_hi=bsurf_hi)
+                    bsurf_lo=bsurf_lo, bsurf_hi=bsurf_hi,
+                    requires_ocean=False)
 
     return [
         # ── HIGH union (3) — 250 each ────────────────────────────────────────
@@ -142,7 +145,8 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
         u("Urban + Coastal",
           wt, 12, bu, 25,
           tier_key="HIGH_union",
-          bsurf_lo=500),
+          bsurf_lo=500,
+          requires_ocean=True),
 
         # built_up ≥ 40%: dense urban fabric confirmed.
         # h_hi = 7m: the universal informal discriminator — informal cities are low-rise
@@ -263,7 +267,8 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
         # Raised from 15% → 20%: 15% let estuarine/mangrove deltas pass (no clear open sea).
         u("Coastal + Agricultural",
           cr, 20, wt, 20,
-          tier_key="LOW"),
+          tier_key="LOW",
+          requires_ocean=True),
 
         # mangrove ≥ 15% (coastal fringe clearly visible) + built_up ≥ 8% (port/settlement).
         # Raised from 8%→15%: 8% admitted 3/25 candidates where mangrove was barely a fringe
@@ -290,5 +295,6 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
         # China Jiangsu/Bohai bboxes removed (offshore turbines in open water).
         u("Coastal + Solar-Wind Hybrid",
           wt, 20, gr, 3,
-          tier_key="LOW"),
+          tier_key="LOW",
+          requires_ocean=True),
     ]
