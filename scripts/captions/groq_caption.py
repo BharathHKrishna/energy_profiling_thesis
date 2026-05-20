@@ -50,14 +50,14 @@ def build_prompt(row: dict) -> str:
     has_plant  = row.get("osm_power_plant", "")
     plant_src  = row.get("osm_plant_source", "")
     landuse    = row.get("osm_landuse", "")
-    has_dam    = row.get("osm_dam", "")
+    waterway   = row.get("osm_waterway", "")
     has_sub    = row.get("osm_power_substation", "")
 
     infra_bits = []
     if str(has_plant).strip().lower() == "true":
         infra_bits.append(f"power plant ({plant_src})" if plant_src else "power plant")
-    if str(has_dam).strip().lower() == "true":
-        infra_bits.append("dam / hydropower")
+    if waterway:
+        infra_bits.append(f"waterway ({waterway})")
     if str(has_sub).strip().lower() == "true":
         infra_bits.append("power substation")
     infra_str = ", ".join(infra_bits) if infra_bits else "none detected"

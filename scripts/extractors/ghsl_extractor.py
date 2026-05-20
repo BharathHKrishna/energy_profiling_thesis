@@ -123,65 +123,6 @@ def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
         return None
 
 
-def sample_degurba(min_lat, max_lat, min_lon, max_lon):
-    """
-    Sample DEGURBA (urbanisation class) layer.
-    Returns the most common valid class code as a string label,
-    or None if no valid data.
-
-    DEGURBA returns a categorical class, not a continuous value.
-    We return the mode (most frequent class) rather than the mean.
-    """
-    raster_path = GHSL_PATHS["degurba"]
-
-    if not os.path.exists(raster_path):
-        logger.warning(f"GHSL: DEGURBA raster not found: {raster_path}")
-        return None
-
-    try:
-        xs, ys = TRANSFORMER_TO_MOLL.transform(
-            [min_lon, max_lon, min_lon, max_lon],
-            [min_lat, min_lat, max_lat, max_lat]
-        )
-        moll_min_x = min(xs)
-        moll_max_x = max(xs)
-        moll_min_y = min(ys)
-        moll_max_y = max(ys)
-
-        with rasterio.open(raster_path) as src:
-            window = rasterio_from_bounds(
-                moll_min_x, moll_min_y,
-                moll_max_x, moll_max_y,
-                src.transform
-            )
-            if window.width <= 0 or window.height <= 0:
-                return None
-            data = src.read(1, window=window)
-
-        if data.size == 0:
-            return None
-
-        # Remove nodata (255)
-        valid_pixels = data[data != 255]
-
-        if len(valid_pixels) == 0:
-            return None
-
-        # Return mode class label
-        values, counts = np.unique(valid_pixels, return_counts=True)
-        dominant_class = int(values[np.argmax(counts)])
-        label = DEGURBA_LABELS.get(dominant_class, f"class_{dominant_class}")
-
-        logger.info(
-            f"GHSL DEGURBA: dominant class = {dominant_class} ({label})"
-        )
-        return label
-
-    except Exception as e:
-        logger.warning(f"GHSL DEGURBA: read error — {e}")
-        return None
-
-
 # ── Main extraction function ───────────────────────────────────────────────────
 
 def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
