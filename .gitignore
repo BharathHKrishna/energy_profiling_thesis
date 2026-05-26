@@ -12,6 +12,9 @@ logs/
 # Large raster data (download separately — see README)
 rasters/
 
+# Raw data files (too large for git)
+data/
+
 # Generated outputs
 outputs/
 
