@@ -19,6 +19,9 @@ mid-run or finished.
 CLI: python scripts/utils/audit_stream_output.py
 """
 import os, sys, csv, json
+sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
+
+from scripts.utils.naming import slug_name as slug
 
 # Fields worth flagging when empty — the ones downstream consumers (captions, notebooks,
 # demand analysis) actually depend on. Not every one of the 50+ feature columns is checked:
@@ -43,11 +46,6 @@ MAP_FILES = {
     "detection":  (DETECTION_DIR, "{s}_detection.png"),
     "pop_det":    (DETECTION_DIR, "{s}_pop_det.png"),
 }
-
-
-def slug(name: str) -> str:
-    return (name.replace(" ", "_").replace("/", "-")
-                .replace("+", "plus").replace("(", "").replace(")", ""))
 
 
 def audit():

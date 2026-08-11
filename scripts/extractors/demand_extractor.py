@@ -33,6 +33,10 @@ import sys, math
 sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 
 from scripts.extractors.ghsl_extractor import extract_ghsl_features
+from scripts.utils.geo import bbox as _bbox
+from scripts.extractors.climate_extractor import (
+    extract_climate_features, _is_valid as _climate_is_valid
+)
 
 # ---- calibrated constants (Eurostat refit 2026-07-31) ---------------------
 FLOOR_PER_CAP = 35.0            # assumed EU m2/person — unverified placeholder, see docstring
@@ -45,26 +49,17 @@ HEAT_BASE   = 18        # HDD counts temperature below this
 COOL_BASE   = 24        # CDD counts temperature above this
 
 
-def _bbox(lat, lon, size_m=512):
-    h = size_m / 2.0
-    dlat = h / 111320.0
-    dlon = h / (111320.0 * math.cos(math.radians(lat)))
-    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
-
-
 def _climate_single(lat, lon):
-    """HDD (base 18) + CDD (base 24) + annual mean temp for one 512 m cell, ERA5-Land 2023."""
-    import ee
-    s, n, w, e = _bbox(lat, lon)
-    tc = (ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR")
-          .filterDate("2023-01-01", "2023-12-31").select("temperature_2m")
-          .map(lambda im: im.subtract(273.15)))
-    hdd  = tc.map(lambda im: im.multiply(-1).add(HEAT_BASE).max(0)).sum()
-    cdd  = tc.map(lambda im: im.subtract(COOL_BASE).max(0)).sum()
-    mean = tc.mean()
-    reg = ee.Geometry.Rectangle([w, s, e, n])
-    rr = lambda img: img.reduceRegion(ee.Reducer.mean(), reg, 500).getInfo().get("temperature_2m")
-    return rr(hdd), rr(cdd), rr(mean)
+    """HDD (base 18) + CDD (base 24) + annual mean temp for one 512 m cell.
+    Delegates to climate_extractor.extract_climate_features() instead of running its own
+    ERA5-Land GEE query — fixed 2026-08-11: this used to be a second, independent
+    implementation of the same query (same collection, same date range, same base temps),
+    but without climate_extractor.py's _is_valid() range-sanity checks, so a bad
+    reduceRegion result that the pipeline's own climate_hdd/climate_cdd24 would have
+    rejected could silently flow into this file's standalone demand figures instead."""
+    min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
+    feat = extract_climate_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
+    return feat.get("climate_hdd"), feat.get("climate_cdd24"), feat.get("climate_mean_temp_c")
 
 
 def _demand_regime(mean_temp_c):
@@ -86,16 +81,21 @@ def _demand_regime(mean_temp_c):
 
 def _demand(built, height, hdd, cdd24, mean_temp_c=None):
     """Reports exactly one of heating_MWh / cooling_MWh, chosen by regime — never both,
-    never a 0 sentinel for the other. "heating" regime -> heating_MWh only; "cooling" ->
-    cooling_MWh only; "comfort" (or regime unknown, mean_temp_c not available) -> neither
-    key is included (null-contract: absent key = no data, not a fabricated NaN/0)."""
+    never a 0 sentinel for the other. "heating" regime -> heating_MWh only, and only if
+    hdd is actually available; "cooling" -> cooling_MWh only, and only if cdd24 is
+    available; "comfort" (or regime unknown, mean_temp_c not available) -> neither key.
+    Fixed 2026-08-11: previously the caller pre-substituted `hdd18 or 0`/`cdd24 or 0`
+    before calling this, so a heating-regime coordinate with genuinely missing HDD data
+    (but present CDD) silently got heating_MWh=0.0 — a fabricated real-looking zero, not
+    the omitted key the null-contract promises. Now hdd/cdd are passed through as-is
+    (possibly None) and only used if the regime that needs them actually has them."""
     floor = built * (max(height, STOREY_H) / STOREY_H)
     regime = _demand_regime(mean_temp_c)
     result = dict(demand_floor_m2=round(floor), demand_regime=regime)
-    if regime == "heating":
+    if regime == "heating" and hdd is not None:
         heat = floor * HEAT_K * (hdd ** HEAT_P) / 1000.0
         result["heating_MWh"] = round(heat, 1)
-    elif regime == "cooling":
+    elif regime == "cooling" and cdd24 is not None:
         cool = floor * COOL_K * (cdd24 ** COOL_P) / 1000.0
         result["cooling_MWh"] = round(cool, 1)
     return result
@@ -109,23 +109,27 @@ def demand_from_features(built_m2, height_m, hdd18, cdd24, mean_temp_c=None):
     climate_mean_temp_c are already fetched by extract_ghsl_features() and
     extract_climate_features().
 
-    Null contract: needs both a built-surface figure and at least one degree-day figure
-    to mean anything — if built_m2 is None (no GHSL data) or both hdd18 and cdd24 are
-    None (no climate data, e.g. over open water), returns {} rather than a 0 MWh sentinel.
+    Null contract: needs a built-surface figure to mean anything at all — if built_m2 is
+    None (no GHSL data), returns {} rather than a 0 MWh sentinel. Otherwise always
+    computes demand_floor_m2/demand_regime (floor area and regime only need height and
+    mean_temp_c, not hdd/cdd), and _demand() itself omits heating_MWh/cooling_MWh rather
+    than fabricating a 0 if the specific degree-day figure that regime needs is missing.
     mean_temp_c is optional — demand_regime is just omitted (None) if it's not passed.
     """
-    if built_m2 is None or (hdd18 is None and cdd24 is None):
+    if built_m2 is None:
         return {}
     height_m = height_m or STOREY_H   # no height data -> assume single storey
-    return _demand(built_m2, height_m, hdd18 or 0, cdd24 or 0, mean_temp_c)
+    return _demand(built_m2, height_m, hdd18, cdd24, mean_temp_c)
 
 
 def extract_demand(lat, lon):
     """Heating + cooling demand (MWh/yr) for the 512 m cell at (lat, lon).
 
-    Standalone/CLI path — makes its own GHSL read + live GEE climate call.
+    Standalone/CLI path — makes its own GHSL read + climate call (via
+    climate_extractor.extract_climate_features(), same as the main pipeline uses).
     The pipeline path (feature_extractor.py) uses demand_from_features() instead,
-    reusing values already fetched by extract_ghsl_features()/extract_climate_features().
+    reusing values already fetched by extract_ghsl_features()/extract_climate_features()
+    earlier in the same per-coordinate pass — this function exists for standalone use.
     """
     s, n, w, e = _bbox(lat, lon)
     g = extract_ghsl_features(lat, lon, s, n, w, e)
@@ -135,7 +139,17 @@ def extract_demand(lat, lon):
 
 
 def extract_demand_batch(coords):
-    """Many BORE coords -> demand each. Climate BATCHED (one GEE call), GHSL local.
+    """Many BORE coords -> demand each. Climate BATCHED (one GEE reduceRegions call for
+    ALL coordinates at once), GHSL local per-coordinate.
+
+    Genuinely different from _climate_single()/extract_climate_features() — those do one
+    reduceRegion per coordinate; this does one reduceRegions across a whole
+    FeatureCollection, a real batching optimization for processing many BORE coordinates
+    that climate_extractor.py has no equivalent for. Kept as its own GEE query for that
+    reason, but now applies the same range-sanity checks climate_extractor.py's
+    _is_valid() does, closing the validation gap this file used to have (fixed 2026-08-11)
+    — a bad reduceRegions result no longer silently flows into a demand figure as if it
+    were real data.
 
     coords: iterable of (lat, lon). Returns list of dicts (same order).
     """
@@ -154,14 +168,18 @@ def extract_demand_batch(coords):
         feats.append(ee.Feature(ee.Geometry.Rectangle([w, s, e, n]), {"id": i}))
     fc = ee.FeatureCollection(feats)
     res = both.reduceRegions(collection=fc, reducer=ee.Reducer.mean(), scale=500).getInfo()
-    clim = {f["properties"]["id"]: (f["properties"].get("hdd"), f["properties"].get("cdd"),
-                                    f["properties"].get("meant"))
-            for f in res["features"]}
+    clim = {}
+    for f in res["features"]:
+        p = f["properties"]
+        hdd  = p.get("hdd")  if _climate_is_valid(p.get("hdd"), "hdd") else None
+        cdd  = p.get("cdd")  if _climate_is_valid(p.get("cdd"), "cdd24") else None
+        mean = p.get("meant") if _climate_is_valid(p.get("meant"), "mean_temp_c") else None
+        clim[p["id"]] = (hdd, cdd, mean)
     out = []
     for i, (la, lo) in enumerate(coords):
         s, n, w, e = _bbox(la, lo)
         g = extract_ghsl_features(la, lo, s, n, w, e)
-        hdd, cdd24, mean_t = clim.get(i, (0, 0, None))
+        hdd, cdd24, mean_t = clim.get(i, (None, None, None))
         d = demand_from_features(g.get("ghsl_built_surface_m2"), g.get("ghsl_building_height_m"),
                                  hdd, cdd24, mean_t)
         d["lat"], d["lon"] = la, lo

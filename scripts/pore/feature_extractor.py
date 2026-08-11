@@ -17,6 +17,7 @@ from scripts.extractors.viirs_extractor       import extract_viirs_features
 from scripts.extractors.climate_extractor      import extract_climate_features
 from scripts.extractors.demand_extractor       import demand_from_features
 from scripts.extractors.demand_score           import demand_score_for_coord
+from scripts.utils.geo                          import bbox as _bbox
 
 logger = get_logger("feature_extractor")
 
@@ -24,13 +25,6 @@ _WC_CLASSES = [
     "water", "built_up", "tree_cover", "cropland", "bare_sparse",
     "shrubland", "grassland", "wetland", "mangrove", "moss_lichen", "snow_ice"
 ]
-
-
-def _bbox(lat, lon, size_m=512):
-    half = size_m / 2
-    dlat = half / 111320
-    dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
-    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
 
 
 def _apply_worldcover(wc_raw, result, label=""):

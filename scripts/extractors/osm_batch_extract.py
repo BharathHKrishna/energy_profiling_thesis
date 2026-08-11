@@ -13,6 +13,8 @@ API:  from osm_batch_extract import batch_extract; batch_extract([(lat,lon), ...
 """
 import json, subprocess, math, os, sys, time
 
+from scripts.utils.geo import bbox as _geo_bbox
+
 # Extract from the FULL planet so every tile holds 100% of OSM (roads, natural,
 # rail, everything) — nothing lost. The filtered pbf is available but drops tags.
 PBF       = "/srv/THESIS/osm_planet/planet-latest.osm.pbf"
@@ -26,10 +28,10 @@ def tile_name(lat, lon):
 
 
 def _bbox(lat, lon, size_m=512):
-    dlat = size_m / 2 / 111320
-    dlon = size_m / 2 / (111320 * math.cos(math.radians(lat)))
-    return [round(lon - dlon, 6), round(lat - dlat, 6),
-            round(lon + dlon, 6), round(lat + dlat, 6)]   # west,south,east,north
+    """[west, south, east, north], rounded — the shape osmium's config JSON needs.
+    Math itself lives in scripts.utils.geo.bbox(); this just reshapes its output."""
+    min_lat, max_lat, min_lon, max_lon = _geo_bbox(lat, lon, size_m)
+    return [round(min_lon, 6), round(min_lat, 6), round(max_lon, 6), round(max_lat, 6)]
 
 
 CHUNK = 450   # osmium extract caps at 500 bboxes/config -> chunk under it

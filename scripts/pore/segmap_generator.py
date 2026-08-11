@@ -30,7 +30,10 @@ from scripts.extractors.osm_extractor import (
     fetch_osm_elements_offline, circuit_breaker_wait
 )
 from scripts.extractors.msft_buildings_extractor import fetch_msft_buildings
+from scripts.extractors.ghsl_extractor import GHSL_PATHS
 from scripts.utils.logger import get_logger
+from scripts.utils.geo import bbox as _bbox
+from scripts.utils.naming import slug_name
 
 logger = get_logger("segmap_generator")
 
@@ -116,12 +119,7 @@ ALL_COORDS = [
 
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
-
-def _bbox(lat, lon, size_m=512):
-    half = size_m / 2
-    dlat = half / 111320
-    dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
-    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
+# _bbox imported from scripts.utils.geo (see top of file) — was duplicated here
 
 
 def fetch_esri_img(min_lon, min_lat, max_lon, max_lat, zoom=TILE_ZOOM):
@@ -822,16 +820,24 @@ def fetch_osm_elements(name, min_lat, max_lat, min_lon, max_lon, lat=None, lon=N
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
-def _fetch_all(name, lat, lon):
+def _fetch_all(name, lat, lon, esri_img=None, wc_pixels=None):
+    """esri_img/wc_pixels: pass in already-fetched values to skip the network/S3 call —
+    the same bbox's imagery and WorldCover pixels get fetched independently by up to 4
+    map calls per coordinate otherwise (generate_single, render_ghsl_segmap here, plus
+    detection_map.py's own ESRI fetch) for identical data. Fixed 2026-08-11."""
     min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
 
-    try:
-        esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
-    except Exception as e:
-        logger.warning(f"[{name}] ESRI fetch failed: {e}")
-        esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
+    if esri_img is None:
+        try:
+            esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
+        except Exception as e:
+            logger.warning(f"[{name}] ESRI fetch failed: {e}")
+            esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
 
-    pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+    if wc_pixels is None:
+        pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+    else:
+        pixels, ok = wc_pixels
 
     return min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok
 
@@ -876,9 +882,10 @@ def _sample_epoch_grid(min_lat, max_lat, min_lon, max_lon, out_shape):
 
 
 def _sample_pop_grid(min_lat, max_lat, min_lon, max_lon, out_shape):
-    pop_path = os.path.join(BASE,
-        "rasters/ghsl/population/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0.tif")
-    return _read_ghsl_grid(pop_path, min_lat, max_lat, min_lon, max_lon, out_shape)
+    # Was a hardcoded literal path here — now reuses ghsl_extractor.py's own
+    # config.yaml-driven path, so an epoch update in config.yaml can't silently leave
+    # this map generator pointing at a different raster than the feature extractor uses.
+    return _read_ghsl_grid(GHSL_PATHS["population"], min_lat, max_lat, min_lon, max_lon, out_shape)
 
 
 def _ax_base(ax, esri_img, min_lon, max_lon, min_lat, max_lat, title, ylabel=""):
@@ -940,20 +947,27 @@ def _ghsl_segmap_overlay(pixels, ghsl_grid, cmap, vmin, vmax, norm=None):
     return rgba
 
 
-def render_ghsl_segmap(name, lat, lon, variant="pop", save=True):
+def render_ghsl_segmap(name, lat, lon, variant="pop", save=True, esri_img=None, wc_pixels=None):
     """
     variant: 'pop' = population density, 'age' = urbanisation epoch
+    esri_img/wc_pixels: pass in already-fetched values to avoid re-fetching the same
+    bbox's imagery/WorldCover pixels a 2nd time (generate_single already fetched them
+    for this same coordinate) — see _fetch_all()'s docstring.
     """
     min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
     logger.info(f"[{name}] GHSL {variant} segmap...")
 
-    try:
-        esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
-    except Exception as e:
-        logger.warning(f"[{name}] ESRI failed: {e}")
-        esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
+    if esri_img is None:
+        try:
+            esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
+        except Exception as e:
+            logger.warning(f"[{name}] ESRI failed: {e}")
+            esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
 
-    pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+    if wc_pixels is None:
+        pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+    else:
+        pixels, ok = wc_pixels
 
     h, w = esri_img.shape[:2]
     if variant == "pop":
@@ -1007,9 +1021,7 @@ def render_ghsl_segmap(name, lat, lon, variant="pop", save=True):
 
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        slug = (name.replace(" ", "_").replace("/", "-")
-                    .replace("+", "plus").replace("(", "").replace(")", ""))
-        out = os.path.join(OUTPUT_DIR, f"{slug}_{variant}_segmap.png")
+        out = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_{variant}_segmap.png")
         plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close(fig)
         logger.info(f"Saved: {out}")
@@ -1019,10 +1031,10 @@ def render_ghsl_segmap(name, lat, lon, variant="pop", save=True):
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def generate_single(lat, lon, stratum_name="anchor", save=True):
+def generate_single(lat, lon, stratum_name="anchor", save=True, esri_img=None, wc_pixels=None):
     logger.info(f"[{stratum_name}] Processing...")
     min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok = \
-        _fetch_all(stratum_name, lat, lon)
+        _fetch_all(stratum_name, lat, lon, esri_img=esri_img, wc_pixels=wc_pixels)
 
     fig, (ax_orig, ax_seg) = plt.subplots(1, 2, figsize=(14, 7))
     fig.patch.set_facecolor("#0f172a")
@@ -1037,9 +1049,7 @@ def generate_single(lat, lon, stratum_name="anchor", save=True):
 
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        safe = (stratum_name.replace(" ","_").replace("/","-")
-                            .replace("+","plus").replace("(","").replace(")",""))
-        out  = os.path.join(OUTPUT_DIR, f"{safe}_segmap.png")
+        out  = os.path.join(OUTPUT_DIR, f"{slug_name(stratum_name)}_segmap.png")
         plt.savefig(out, dpi=150, bbox_inches="tight", facecolor="#0f172a")
         plt.close(fig)
         logger.info(f"Saved: {out}")

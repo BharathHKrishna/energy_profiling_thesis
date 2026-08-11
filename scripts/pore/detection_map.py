@@ -10,7 +10,7 @@ Usage (standalone — no pipeline needed):
     python scripts/pore/detection_map.py                        # all 18 anchors
     python scripts/pore/detection_map.py --lat 52.52 --lon 13.405 --name test
 """
-import sys, os, argparse, requests, xml.etree.ElementTree as ET
+import sys, os, argparse
 sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 
 import numpy as np
@@ -25,6 +25,7 @@ from matplotlib.collections import PatchCollection
 # segmap_generator.py — imported here rather than duplicated, since render_ghsl_det
 # below needs the exact same population/age data as render_ghsl_segmap does.
 from scripts.extractors.msft_buildings_extractor import fetch_msft_buildings
+from scripts.utils.naming import slug_name
 from scripts.pore.segmap_generator import (
     fetch_esri_img, _bbox,
     extract_osm_buildings, extract_osm_infra,
@@ -171,66 +172,28 @@ def _ax_setup(ax, min_lon, max_lon, min_lat, max_lat, esri_img, title):
     ax.set_title(title, color="#94a3b8", fontsize=8, fontfamily="monospace", pad=4)
 
 
-# ── OSM API v0.6 fallback (used when all Overpass mirrors fail) ────────────────
-
-def _fetch_osm_api(min_lat, max_lat, min_lon, max_lon):
-    url = (f"https://api.openstreetmap.org/api/0.6/map"
-           f"?bbox={min_lon},{min_lat},{max_lon},{max_lat}")
-    resp = requests.get(url, timeout=60, headers={"Accept": "application/xml"})
-    resp.raise_for_status()
-
-    root = ET.fromstring(resp.content)
-
-    nodes = {}
-    for nd in root.findall("node"):
-        nid = nd.get("id")
-        lat_ = nd.get("lat")
-        lon_ = nd.get("lon")
-        if nid and lat_ and lon_:
-            nodes[nid] = {"lat": float(lat_), "lon": float(lon_)}
-
-    elements = []
-
-    for nd in root.findall("node"):
-        tags = {t.get("k"): t.get("v") for t in nd.findall("tag")}
-        if tags and nd.get("lat"):
-            elements.append({
-                "type": "node", "id": nd.get("id"),
-                "lat": float(nd.get("lat")), "lon": float(nd.get("lon")),
-                "tags": tags,
-            })
-
-    for way in root.findall("way"):
-        tags   = {t.get("k"): t.get("v") for t in way.findall("tag")}
-        ndrefs = [nr.get("ref") for nr in way.findall("nd")]
-        geom   = [{"lat": nodes[r]["lat"], "lon": nodes[r]["lon"]}
-                  for r in ndrefs if r in nodes]
-        if tags or geom:
-            elements.append({
-                "type": "way", "id": way.get("id"),
-                "tags": tags, "geometry": geom,
-            })
-
-    return elements
-
-
 # ── Data fetch ─────────────────────────────────────────────────────────────────
 
-def _fetch(name, lat, lon, elements=None):
+def _fetch(name, lat, lon, elements=None, esri_img=None, ms_rings=None):
+    """esri_img/ms_rings: pass in already-fetched values to avoid re-fetching the same
+    bbox's imagery/buildings a 2nd time — render_detection_panels and render_ghsl_det
+    both call this for the same coordinate otherwise. Fixed 2026-08-11."""
     min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
 
-    try:
-        esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
-    except Exception as e:
-        logger.warning(f"[{name}] ESRI fetch failed: {e}")
-        esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
+    if esri_img is None:
+        try:
+            esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
+        except Exception as e:
+            logger.warning(f"[{name}] ESRI fetch failed: {e}")
+            esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
 
-    try:
-        ms_rings = fetch_msft_buildings(min_lat, max_lat, min_lon, max_lon)
-        logger.info(f"[{name}] MS buildings: {len(ms_rings)}")
-    except Exception as e:
-        logger.warning(f"[{name}] MS buildings failed: {e}")
-        ms_rings = []
+    if ms_rings is None:
+        try:
+            ms_rings = fetch_msft_buildings(min_lat, max_lat, min_lon, max_lon)
+            logger.info(f"[{name}] MS buildings: {len(ms_rings)}")
+        except Exception as e:
+            logger.warning(f"[{name}] MS buildings failed: {e}")
+            ms_rings = []
 
     osm_rings = []
     infra     = {k: [] for k in OSM_CLR}
@@ -251,9 +214,9 @@ def _fetch(name, lat, lon, elements=None):
 
 # ── Render ─────────────────────────────────────────────────────────────────────
 
-def render_detection_panels(name, lat, lon, save=True, elements=None):
+def render_detection_panels(name, lat, lon, save=True, elements=None, esri_img=None, ms_rings=None):
     min_lat, max_lat, min_lon, max_lon, esri_img, ms_rings, osm_rings, infra = \
-        _fetch(name, lat, lon, elements=elements)
+        _fetch(name, lat, lon, elements=elements, esri_img=esri_img, ms_rings=ms_rings)
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     fig.patch.set_facecolor(BG)
@@ -280,9 +243,7 @@ def render_detection_panels(name, lat, lon, save=True, elements=None):
 
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        slug = (name.replace(" ", "_").replace("+", "plus")
-                    .replace("/", "-").replace("(", "").replace(")", ""))
-        out  = os.path.join(OUTPUT_DIR, f"{slug}_detection.png")
+        out  = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_detection.png")
         plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close()
         logger.info(f"Saved: {out}")
@@ -326,15 +287,17 @@ def _colour_buildings_by_ghsl(ax, rings, ghsl_grid, h, w,
             continue
 
 
-def render_ghsl_det(name, lat, lon, variant="pop", save=True, elements=None):
+def render_ghsl_det(name, lat, lon, variant="pop", save=True, elements=None, esri_img=None, ms_rings=None):
     """
     variant: 'pop' = population density, 'age' = urbanisation epoch
 
     Reuses _fetch()/_merge_no_overlap() above for buildings+infra — only the GHSL
     colouring and contrasting infra palette differ from render_detection_panels().
+    esri_img/ms_rings: pass in already-fetched values (render_detection_panels already
+    fetched them for this same coordinate) to skip re-fetching.
     """
     min_lat, max_lat, min_lon, max_lon, esri_img, ms_rings, osm_rings, infra = \
-        _fetch(name, lat, lon, elements=elements)
+        _fetch(name, lat, lon, elements=elements, esri_img=esri_img, ms_rings=ms_rings)
 
     osm_rings = [r for r in osm_rings if len(r) != 16]
     all_rings = _merge_no_overlap(ms_rings, osm_rings)
@@ -399,9 +362,7 @@ def render_ghsl_det(name, lat, lon, variant="pop", save=True, elements=None):
 
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        slug = (name.replace(" ", "_").replace("/", "-")
-                    .replace("+", "plus").replace("(", "").replace(")", ""))
-        out = os.path.join(OUTPUT_DIR, f"{slug}_{variant}_det.png")
+        out = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_{variant}_det.png")
         plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close(fig)
         logger.info(f"Saved: {out}")

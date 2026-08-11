@@ -114,16 +114,22 @@ Describe what the land cover, energy potential figures, and infrastructure revea
 def generate_caption(features: dict, bbox_size_m: int = 512) -> str:
     """
     Generate a single energy caption for one coordinate's feature dict.
-    Returns the caption string, or an error string on failure.
+    Returns the caption string. Raises on failure — never returns an
+    "[Error: ...]" string that could pass as a real caption downstream (a missing
+    key or an exhausted retry used to return one; `audit_stream_output.py`'s
+    `len(caption) > 20` completeness check couldn't tell that apart from a real
+    caption, so a missing GROQ_API_KEY silently looked like 100% success. Fixed
+    2026-08-11 — callers must handle the exception (run_pipeline.py's stream
+    already does; see its caption-harvesting loop).
     """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        logger.error("GROQ_API_KEY not set")
-        return "[Error: GROQ_API_KEY not configured]"
+        raise RuntimeError("GROQ_API_KEY not set")
 
     client = Groq(api_key=api_key)
     prompt = build_prompt(features, bbox_size_m)
 
+    last_err = None
     for attempt in range(3):
         try:
             resp = client.chat.completions.create(
@@ -136,11 +142,12 @@ def generate_caption(features: dict, bbox_size_m: int = 512) -> str:
             logger.info(f"Caption generated ({len(caption)} chars)")
             return caption
         except Exception as e:
+            last_err = e
             logger.warning(f"Groq attempt {attempt + 1}/3 failed: {e}")
             if attempt < 2:
                 time.sleep(3)
 
-    return "[Error: caption generation failed after 3 attempts]"
+    raise RuntimeError(f"caption generation failed after 3 attempts: {last_err}")
 
 
 # ── Batch CLI (reads pore_features.csv, writes pore_captions.json) ────────────
@@ -169,7 +176,11 @@ def _caption_task(i, row):
             except (ValueError, TypeError):
                 pass
 
-    caption = generate_caption(features, bbox_size_m=bbox_m)
+    try:
+        caption = generate_caption(features, bbox_size_m=bbox_m)
+    except Exception as e:
+        logger.warning(f"{stratum}: caption failed: {e}")
+        caption = None
     return stratum, caption
 
 
@@ -190,10 +201,12 @@ def main():
         futures = {pool.submit(_caption_task, i, row): row for i, row in enumerate(rows)}
         for future in as_completed(futures):
             stratum, caption = future.result()
-            results[stratum] = caption
+            if caption is not None:
+                results[stratum] = caption
             with lock:
                 done += 1
-                logger.info(f"[{done}/{len(rows)}] {stratum} — done")
+                status = "done" if caption is not None else "FAILED"
+                logger.info(f"[{done}/{len(rows)}] {stratum} — {status}")
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as f:

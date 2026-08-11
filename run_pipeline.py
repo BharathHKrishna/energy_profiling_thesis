@@ -69,10 +69,12 @@ N_PER_STRATUM: dict = {
 
 N_WORKERS       = 4    # process-pool size for extract+maps (CPU/IO heavy: rasterio, GEE, matplotlib, OSM)
 CAPTION_WORKERS = 6    # thread-pool size for captions (network I/O only — Groq)
-RNG_SEED        = 314  # select-stage sampling seed — changed again 2026-08-11 (42 -> 777 ->
-                        # 555 -> 314), this time specifically to validate the new stale-entry
-                        # pruning logic in run_stream() (a genuinely different coordinate draw
-                        # is required to exercise it for real). No functional coupling to
+RNG_SEED        = 271  # select-stage sampling seed — changed again 2026-08-11 (42 -> 777 ->
+                        # 555 -> 314 -> 271), this time to run a genuinely fresh validation of
+                        # the redundant-fetch consolidation + all other fixes from this
+                        # session's code-review pass (a new draw forces real extraction/maps
+                        # through the new shared-fetch code path rather than resuming cached
+                        # data from before those changes existed). No functional coupling to
                         # real_anchor_finder.py's own separate RNG_SEED constant.
 
 BASE          = "/srv/THESIS/energy_profiling_thesis"
@@ -110,8 +112,13 @@ def _extract_and_maps_worker(row):
     try:
         from scripts.pore.feature_extractor import extract_all_features
         from scripts.extractors.osm_extractor import circuit_breaker_wait
-        from scripts.pore.segmap_generator import generate_single, fetch_osm_elements, _bbox, render_ghsl_segmap
+        from scripts.pore.segmap_generator import (
+            generate_single, fetch_osm_elements, _bbox, render_ghsl_segmap, fetch_esri_img
+        )
         from scripts.pore.detection_map import render_detection_panels, render_ghsl_det
+        from scripts.extractors.worldcover_extractor import fetch_worldcover_pixels
+        from scripts.extractors.msft_buildings_extractor import fetch_msft_buildings
+        import numpy as _np
         import time as _time
 
         name = str(row.get("stratum_name", ""))
@@ -124,7 +131,10 @@ def _extract_and_maps_worker(row):
             importance_tier=str(row.get("importance_tier", "")),
             strata_type=str(row.get("strata_type", "")),
         )
-        _time.sleep(1.5)  # OSM polite pacing (kept from the old features worker)
+        # NOTE: a 1.5s "OSM polite pacing" sleep used to sit here, left over from when OSM
+        # reads were live Overpass calls that needed rate-limiting. OSM is fully offline now
+        # (local tile reads, ~5-12ms) — nothing left to be polite to. Removed 2026-08-11:
+        # at 10,000 coordinates / 4 workers this was ~4.2 hours of pure dead time in `stream`.
 
         maps_ok, maps_err = True, None
         try:
@@ -138,10 +148,28 @@ def _extract_and_maps_worker(row):
             # discarding real MS-Buildings-only detection maps for no reason (found
             # 2026-08-10 reviewing the 18-coordinate smoke test — 2/18 strata lost all
             # 4 maps to this for what was just a sparse-OSM area, not an error).
-            generate_single(lat, lon, stratum_name=name)
-            render_ghsl_segmap(name, lat, lon, variant="pop")
-            render_detection_panels(name, lat, lon, elements=elements)
-            render_ghsl_det(name, lat, lon, variant="pop", elements=elements)
+
+            # Fetch the shared, bbox-scoped inputs ONCE and pass them to all 4 maps —
+            # each of these used to get re-fetched independently by 2-4 of the map calls
+            # below for identical data (same ESRI tile, same WorldCover pixels, same MS
+            # Buildings query). Fixed 2026-08-11.
+            try:
+                esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
+            except Exception as e:
+                logger.warning(f"[{name}] ESRI fetch failed: {e}")
+                esri_img = _np.zeros((512, 512, 3), dtype=_np.uint8)
+            wc_pixels_raw, _, wc_ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+            wc_pixels = (wc_pixels_raw, wc_ok)
+            try:
+                ms_rings = fetch_msft_buildings(min_lat, max_lat, min_lon, max_lon)
+            except Exception as e:
+                logger.warning(f"[{name}] MS buildings fetch failed: {e}")
+                ms_rings = []
+
+            generate_single(lat, lon, stratum_name=name, esri_img=esri_img, wc_pixels=wc_pixels)
+            render_ghsl_segmap(name, lat, lon, variant="pop", esri_img=esri_img, wc_pixels=wc_pixels)
+            render_detection_panels(name, lat, lon, elements=elements, esri_img=esri_img, ms_rings=ms_rings)
+            render_ghsl_det(name, lat, lon, variant="pop", elements=elements, esri_img=esri_img, ms_rings=ms_rings)
             if not elements:
                 logger.warning(f"[{name}] OSM fetch returned empty — maps rendered "
                                "without OSM overlay (base imagery / MS Buildings still used)")

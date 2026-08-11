@@ -32,6 +32,7 @@ warnings.filterwarnings("ignore")
 from collections import Counter
 
 from scripts.utils.logger import get_logger
+from scripts.utils.geo import bbox as _geo_bbox
 
 logger = get_logger("osm_extractor")
 
@@ -50,16 +51,16 @@ def _tile_name(lat, lon):
 
 def generate_bbox(lat, lon, size_m=512):
     """
-    Generate a 512×512m bounding box centred on (lat, lon).
-    Same logic as stratified_sampler.py — must stay consistent.
+    Generate a 512x512m bounding box centred on (lat, lon), as a dict.
+    Math lives in scripts.utils.geo.bbox(); this just reshapes + rounds its output
+    (dict shape kept for backwards compatibility with existing callers).
     """
-    delta_lat = (size_m / 2) / 111320
-    delta_lon = (size_m / 2) / (111320 * np.cos(np.radians(lat)))
+    min_lat, max_lat, min_lon, max_lon = _geo_bbox(lat, lon, size_m)
     return {
-        "min_lat": round(lat - delta_lat, 6),
-        "max_lat": round(lat + delta_lat, 6),
-        "min_lon": round(lon - delta_lon, 6),
-        "max_lon": round(lon + delta_lon, 6),
+        "min_lat": round(min_lat, 6),
+        "max_lat": round(max_lat, 6),
+        "min_lon": round(min_lon, 6),
+        "max_lon": round(max_lon, 6),
     }
 
 
