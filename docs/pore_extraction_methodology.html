@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>STREAM — Per-Coordinate PORE Extraction Methodology</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; padding: 32px 24px; }
+  h1 { font-size: 22px; color: #f8fafc; margin-bottom: 6px; }
+  h2 { font-size: 16px; color: #f1f5f9; margin: 28px 0 12px; }
+  .subtitle { color: #64748b; font-size: 13px; margin-bottom: 32px; font-family: monospace; }
+
+  .pipeline { display: flex; align-items: center; margin-bottom: 32px; flex-wrap: wrap; gap: 6px; }
+  .pipe-step { background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 8px 14px; font-size: 12px; font-family: monospace; }
+  .pipe-step span { color: #7F77DD; font-weight: bold; }
+  .pipe-arrow { color: #475569; font-size: 16px; padding: 0 4px; }
+
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .card-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #1a2540; border-bottom: 1px solid #334155; }
+  .card-title { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+  .card-body { padding: 14px 16px; }
+  .card-body.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0; padding: 0; }
+  .col { padding: 12px 14px; border-right: 1px solid #1e293b; }
+  .col:last-child { border-right: none; }
+  .col-label { font-size: 10px; font-family: monospace; text-transform: uppercase; letter-spacing: 0.06em; color: #475569; margin-bottom: 6px; }
+  .col-val { font-size: 12px; color: #cbd5e1; }
+  @media (max-width: 1000px) { .card-body.grid3 { grid-template-columns: 1fr 1fr; } }
+
+  .rule-box { background: #0f1c2e; border: 1px solid #1e3a5f; border-radius: 5px; padding: 8px 10px; font-size: 12px; font-family: monospace; color: #bae6fd; margin: 8px 0; white-space: pre-wrap; }
+  .why { font-size: 12px; color: #94a3b8; margin-top: 6px; }
+  .why b { color: #cbd5e1; }
+  code { font-family: monospace; background: #0f1c2e; padding: 1px 6px; border-radius: 3px; color: #93c5fd; font-size: 12px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+  th { background: #0f172a; color: #7F77DD; padding: 6px 10px; border-bottom: 2px solid #334155; text-align: left; font-family: monospace; font-size: 11px; text-transform: uppercase; }
+  td { background: #1e293b; padding: 6px 10px; border-bottom: 1px solid #0f172a; font-family: monospace; }
+  tr:hover td { background: #243451; }
+
+  .flag { display: inline-block; font-size: 10px; font-family: monospace; padding: 2px 8px; border-radius: 3px; font-weight: bold; margin-right: 6px; }
+  .flag-fixed { background: #0d2b2b; color: #34d399; border: 1px solid #065f46; }
+  .flag-bug { background: #2d1b1b; color: #f87171; border: 1px solid #7f1d1d; }
+  .flag-changed { background: #1e1a2e; color: #c4b5fd; border: 1px solid #5b21b6; }
+
+  .pool-badge { display: inline-block; font-size: 10px; font-family: monospace; padding: 2px 8px; border-radius: 3px; font-weight: bold; margin-right: 6px; }
+  .pool-process { background: #0f2d4a; color: #38bdf8; border: 1px solid #0369a1; }
+  .pool-thread { background: #2d1b4a; color: #c084fc; border: 1px solid #7e22ce; }
+</style>
+</head>
+<body>
+
+<h1>STREAM — Per-Coordinate PORE Extraction Methodology</h1>
+<p class="subtitle">outputs/csv/filtered_strata_sample_selected.csv → run_pipeline.py::run_stream() → pore_features.csv + maps/*.png + pore_captions.json</p>
+
+<div class="pipeline">
+  <div class="pipe-step"><span>1.</span> 7 raw sources (per coordinate)</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>2.</span> Demand + demand_score</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>3.</span> 4 maps</div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-step"><span>4.</span> Groq caption</div>
+</div>
+
+<h2>The streaming architecture — two pools, not one</h2>
+<div class="card">
+  <div class="card-body">
+    <p><span class="pool-badge pool-process">PROCESS POOL</span> <code>N_WORKERS=4</code> —
+    extract (7 sources) + demand/demand_score + 4 map renders, all CPU/IO-heavy work
+    (rasterio, GEE calls, matplotlib, an OSM subprocess). <span class="pool-badge pool-thread">THREAD POOL</span>
+    <code>CAPTION_WORKERS=6</code> — the Groq API call, network-I/O-only, releases the GIL while
+    waiting on the response.</p>
+    <p style="margin-top:8px">Critically, a coordinate's caption is submitted the moment
+    <b>its own</b> extract+maps future completes — via <code>as_completed()</code> inside the
+    loop, not after the whole batch finishes. This replaces an older design where features,
+    maps, and captions were three sequential batch stages with hard barriers between them.</p>
+    <div class="rule-box">with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
+    futures = {pool.submit(_extract_and_maps_worker, t): t for t in tasks}
+    for future in as_completed(futures):
+        features, maps_ok, maps_err = future.result()
+        if features is not None:
+            _append_feature_row(features)      # incremental, resume-safe
+            _submit_caption(features)           # fires immediately, doesn't wait for the batch</div>
+    <div class="why">Resume-safety: coordinates already in <code>pore_features.csv</code> skip
+    re-extraction, but still get checked for a missing caption up front — they don't wait behind
+    the current run's new extractions.</div>
+  </div>
+</div>
+
+<h2>The 7 raw sources</h2>
+<div class="card">
+  <div class="card-body grid3">
+    <div class="col"><div class="col-label">ESA WorldCover</div><div class="col-val">Land-cover class %, streamed live from S3, no local persistence</div></div>
+    <div class="col"><div class="col-label">GHSL</div><div class="col-val">Built surface m², building height, population/km² — local raster reads</div></div>
+    <div class="col"><div class="col-label">Solar Atlas</div><div class="col-val">PVOUT, GHI — local raster</div></div>
+    <div class="col"><div class="col-label">Wind Atlas</div><div class="col-val">Speed + power density @ 100m — live ERA5 API</div></div>
+    <div class="col"><div class="col-label">VIIRS</div><div class="col-val">Nighttime lights, NDVI, surface reflectance — live GEE</div></div>
+    <div class="col"><div class="col-label">Climate</div><div class="col-val">HDD/CDD degree-days, mean temp — live GEE, ERA5-Land ~11km native res</div></div>
+    <div class="col"><div class="col-label">OSM (offline)</div><div class="col-val">Buildings/infra/landuse — local pre-carved tile, ~5-12ms</div></div>
+  </div>
+</div>
+
+<h2>Null-contract convention</h2>
+<div class="card">
+  <div class="card-body">
+    <p>Absent data means the dict key is <b>absent</b>, never a sentinel value like <code>0</code>
+    or <code>NaN</code> written directly by extraction code — a stratum with no OSM buildings
+    looks different from a stratum where the OSM read itself failed, and a coordinate over open
+    water genuinely has no climate data rather than a fabricated zero. The one deliberate
+    exception: <code>osm_building_count=0</code> is a real, meaningful zero (a coordinate can
+    genuinely have zero buildings), not an absence.</p>
+    <p style="margin-top:8px">When features are read back through pandas (<code>pore_features.csv</code>
+    → DataFrame), an empty cell becomes <code>NaN</code>, not the original absent-key state —
+    <code>_clean_row()</code> converts float NaN back to <code>None</code> for anything reloaded
+    this way.</p>
+  </div>
+</div>
+
+<h2>Demand — two pieces, both derived, neither re-fetches data</h2>
+<div class="card">
+  <div class="card-header"><span class="card-title"><span class="flag flag-changed">CHANGED 2026-08-10</span>heating_MWh / cooling_MWh — now exactly one, never both</span></div>
+  <div class="card-body">
+    <p><code>demand_extractor.py::demand_from_features()</code> computes annual heating/cooling
+    energy demand from already-fetched GHSL (built surface, height) and climate (HDD18, CDD24,
+    mean temp) values — no new GHSL read, no new GEE call.</p>
+    <p style="margin-top:8px"><b>Previous behavior:</b> both <code>heating_MWh</code> and
+    <code>cooling_MWh</code> were always computed and returned together, reasoning that a single
+    annual mean can mask real heating AND cooling need on different days within the same year.</p>
+    <p style="margin-top:8px"><b>Current behavior, by explicit instruction:</b> exactly one
+    value is reported, chosen by <code>demand_regime</code> (mean annual temp vs the same
+    18°C/24°C thresholds already used for HDD/CDD):</p>
+    <div class="rule-box">mean_temp &lt; 18°C  → "heating" regime  → heating_MWh only
+18°C ≤ mean_temp ≤ 24°C → "comfort" regime  → neither key (both NaN when read back)
+mean_temp &gt; 24°C  → "cooling" regime  → cooling_MWh only
+mean_temp unavailable → regime = None    → neither key</div>
+    <p style="margin-top:8px">Verified live across all 4 cases with real numbers, e.g. heating
+    regime → <code>{'heating_MWh': 222.2}</code> with no <code>cooling_MWh</code> key at all —
+    not a zero, an absence.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">demand_score / demand_tier — the separate 0-100 score</span></div>
+  <div class="card-body">
+    <p><code>demand_score.py::demand_score_for_coord()</code> — a different, deliberately
+    single-cell (not the notebook's validated 9-cell/3×3-neighborhood-mean) formula, ported from
+    <code>energy_demand_formula.ipynb</code>:</p>
+    <div class="rule-box">softceil( sqrt(built) * viirs^0.2 * max(height,4)^0.3 / 5 * osm_gate,
+           knee=72, span=28, tau=37 )
+tiers: HIGH ≥ 65, MID-HIGH ≥ 45, MID ≥ 25, LOW &lt; 25</div>
+    <p>The <code>osm_gate</code> term is a <b>second, separate</b> local OSM read
+    (<code>osm_offline.py::extract_osm_use()</code>, landuse-dominance + power-generation-override
+    multiplier) — distinct from the main OSM feature extraction earlier in the same pass, cheap
+    since OSM is fully offline now. This is the exact function that had the tile-lookup rounding
+    bug documented in <code>docs/osm_carve_methodology.html</code>.</p>
+    <div class="why">Both heat/cool MWh and demand_score/tier are computed inside
+    <code>extract_all_features()</code> as steps 6b and 7b, and both are cited in
+    <code>groq_caption.py</code>'s prompt construction. "Energy demand" unqualified refers to
+    this score/tier, never the physical heat/cool MWh formulas — a terminology distinction
+    established early and enforced throughout the project.</div>
+  </div>
+</div>
+
+<h2>Maps — 4 per coordinate, all-or-nothing gate removed</h2>
+<div class="card">
+  <div class="card-header"><span class="card-title"><span class="flag flag-fixed">FIXED 2026-08-10</span>_extract_and_maps_worker()'s map gate</span></div>
+  <div class="card-body">
+    <table>
+      <thead><tr><th>Map</th><th>Function</th><th>Needs OSM elements?</th></tr></thead>
+      <tbody>
+        <tr><td>segmap</td><td>generate_single()</td><td>No</td></tr>
+        <tr><td>pop segmap</td><td>render_ghsl_segmap(variant="pop")</td><td>No</td></tr>
+        <tr><td>detection</td><td>render_detection_panels()</td><td>Optional (elements=None default)</td></tr>
+        <tr><td>pop detection</td><td>render_ghsl_det(variant="pop")</td><td>Optional</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px"><b>Previous behavior:</b> the worker fetched OSM elements once,
+    then gated ALL 4 maps behind it — <code>if elements: [render all 4] else: skip all 4,
+    maps_ok=False</code>. Confirmed live: 2 of 18 coordinates in one run lost all 4 maps this
+    way, logged only as a one-line "OSM fetch returned empty" warning.</p>
+    <p style="margin-top:8px"><b>Why this was wrong:</b> traced through the actual code —
+    <code>generate_single()</code>/<code>render_ghsl_segmap()</code> don't take an
+    <code>elements</code> parameter at all, and <code>render_detection_panels()</code>/
+    <code>render_ghsl_det()</code> both default to <code>elements=None</code> and handle an
+    empty list fine (zero OSM building overlay, but Microsoft Buildings — a separate data
+    source — still renders independently). An empty OSM fetch is a legitimate, if sparse,
+    result, not a failure.</p>
+    <p style="margin-top:8px"><b>Fix:</b> all 4 maps are now always attempted; a genuinely empty
+    OSM fetch produces a soft warning log, not a skip. Verified live: the two previously-broken
+    coordinates got complete map sets on the next run with no other change.</p>
+  </div>
+</div>
+
+<h2>The ragged-CSV bug</h2>
+<div class="card">
+  <div class="card-header"><span class="card-title"><span class="flag flag-fixed">FIXED 2026-08-10</span>_append_feature_row() header drift</span></div>
+  <div class="card-body">
+    <p>The incremental per-coordinate CSV writer grows its shared <code>feature_fieldnames</code>
+    list as later coordinates introduce optional keys earlier ones lacked — expected, given the
+    null-contract convention means different strata legitimately populate different optional
+    fields (a coordinate with no climate coverage simply lacks those keys). The bug: the on-disk
+    header was written <b>once</b>, from the first coordinate's narrower key set, and never
+    rewritten as the fieldname list grew.</p>
+    <div class="rule-box">row 0 (header): 46 columns
+row 1:  46 columns
+row 2:  51 columns   ← already wider than the header
+...
+row 18: 54 columns   ← pandas.read_csv: "Expected 46 fields, saw 54"</div>
+    <p style="margin-top:8px"><b>Fix:</b> a normalization pass now runs automatically at the end
+    of every <code>stream</code> run. Since <code>feature_fieldnames</code> only ever grows by
+    appending (never reorders/removes), every row's on-disk width is guaranteed to be a prefix
+    of the final fieldname list in write order — safe to re-pad every row to the final column
+    count and replace the stale header in one rewrite pass.</p>
+  </div>
+</div>
+
+<h2>Measured performance</h2>
+<div class="card">
+  <div class="card-body">
+    <table>
+      <thead><tr><th>Run</th><th>Coordinates</th><th>Time</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>1st smoke test</td><td>18</td><td>21.0 min</td><td>20.3 min was a single tile-lookup-bug stall, not real work</td></tr>
+        <tr><td>1st, clean re-run</td><td>18</td><td>1.3 min</td><td>after rounding-bug + ragged-CSV fixes; 2/18 still skipped maps</td></tr>
+        <tr><td>2nd smoke test</td><td>18</td><td>1.8 min</td><td>after map-gate fix too — all 18 got full map sets, more real work than the 1.3min run</td></tr>
+        <tr><td>3rd smoke test</td><td>18</td><td>1.8 min</td><td>different random coordinates, same timing — confirms consistency</td></tr>
+        <tr><td>16-strata run</td><td>16</td><td>1.3 min</td><td>after 2 unreliable strata removed</td></tr>
+      </tbody>
+    </table>
+    <div class="rule-box">10,000-coordinate projection (from the 1.8min/18-coordinate measurement,
+the more representative one since all coordinates did full map work):
+  108s / 18 coords / 4 workers ≈ 24s of work per coordinate
+  10,000 / 4 workers × 24s ≈ 60,000s ≈ <b>~16.7 hours</b></div>
+    <div class="why">Linear extrapolation from an 18-coordinate sample — not stress-tested
+    against GEE/Groq rate limits at sustained multi-hour load. N_WORKERS could potentially be
+    raised above 4 if the external APIs tolerate more concurrency, which would reduce this
+    proportionally, but that hasn't been tested at any scale larger than 18 coordinates.</div>
+  </div>
+</div>
+
+</body>
+</html>

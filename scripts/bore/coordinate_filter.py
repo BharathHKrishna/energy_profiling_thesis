@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE           = Path(__file__).resolve().parents[2]
 FEATURES_HTML  = BASE / "docs" / "features.html"
-BREAKDOWN_HTML = BASE / "docs" / "2500_coordinate_breakdown.html"
+BREAKDOWN_HTML = BASE / "docs" / "10000_coordinate_breakdown.html"
 
 # Full WC class list — HTML legend only shows 7 of 11 so supplement the rest
 _WC_SUPPLEMENT = {"wetland": 90, "mangrove": 95, "snow": 70, "moss": 100}
@@ -58,7 +58,7 @@ def parse_esa_classes(path: Path) -> dict[str, int]:
     return result
 
 
-# ── 2. Parse importance tiers from 2500_coordinate_breakdown.html ────────────
+# ── 2. Parse importance tiers from 10000_coordinate_breakdown.html ───────────
 def parse_importance_tiers(path: Path) -> dict[str, str]:
     """
     Returns {stratum_name_lower: 'HIGH'|'MID'|'LOW'}.
@@ -234,26 +234,6 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
           tier_key="MID",
           primary_hi=60,
           pop_hi=50),
-
-        # bare_sparse ≥ 25% (desert/scrubland setting) + built_up ≥ 15% (panel arrays).
-        # Key differentiator from Industrial+Arid: that stratum requires only built_up≥1%.
-        # Utility solar farms cover 15-40% of the bbox with panels (ESA classifies as built_up).
-        # pop_hi=100: solar farms are uninhabited.
-        u("Utility-scale Solar Farm",
-          bs, 25, bu, 15,
-          tier_key="MID",
-          pop_hi=100),
-
-        # built_up ≥ 40% (terminals, aprons, tarmac) + grassland ≥ 8%
-        # OSM entry is now way[aeroway=aerodrome]["iata"] — polygon centroid sits at airfield
-        # center, capturing runway tarmac + grass safety strips in the same 512m bbox.
-        # Lowered from ≥12% to ≥8%: grass strips between runways read 8-15% at this scale.
-        # pop_hi=300: airports adjacent to dense cities (Changi, HK, CDG) still pass.
-        # bsurf_lo=200: confirms large terminal/hangar footprint present.
-        u("Airport / Aviation",
-          bu, 40, gr, 8,
-          tier_key="MID",
-          pop_hi=300, bsurf_lo=200),
 
         # ── LOW (5) — 30 each ────────────────────────────────────────────────
         # cropland ≥ 25% (irrigated fields) + water ≥ 12% (water channel clearly visible)

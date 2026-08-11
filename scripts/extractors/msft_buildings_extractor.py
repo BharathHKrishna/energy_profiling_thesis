@@ -24,7 +24,7 @@ from scripts.utils.logger import get_logger
 logger = get_logger("msft_buildings")
 
 INDEX_URL  = "https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv"
-CACHE_DIR  = "/srv/THESIS/energy_profiling_thesis/outputs/cache/msft_buildings"
+CACHE_DIR  = "/srv/THESIS/energy_profiling_thesis/cache/msft_buildings"
 INDEX_PATH = os.path.join(CACHE_DIR, "dataset-links.csv")
 
 os.makedirs(CACHE_DIR, exist_ok=True)

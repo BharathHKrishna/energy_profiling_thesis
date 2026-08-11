@@ -1,9 +1,30 @@
+"""OSM feature extractor — OFFLINE.
+
+Source of truth is the LOCAL OpenStreetMap planet (snapshot 2026-06-13). No Overpass,
+no network. OSM for a coord set is pre-carved into tiny 512 m tiles ONCE (see
+osm_batch_extract.py), then each coord reads its tile in ~5-12 ms.
+
+  planet-latest.osm.pbf ──osm_batch_extract (one pass)──► tiles/<lat>_<lon>.osm.pbf
+  (tiles hold 100% of OSM tags for that 512 m — nothing filtered out)
+
+Public API is UNCHANGED from the old Overpass version — same signatures, same
+feature keys, same null contract — so every BORE / PORE / segmap caller keeps working:
+  - generate_bbox(lat, lon, size_m=512)
+  - extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon) -> dict
+  - get_osm_energy_elements(lat, lon, min_lat, max_lat, min_lon, max_lon) -> list
+
+Read paths (auto-selected):
+  1. FAST    : pre-extracted tile for this coord -> osmium export -> ~5-12 ms.
+  2. FALLBACK: live `osmium extract` from the full planet (complete tags) on demand.
+Both yield the SAME unified element list (full tags), so parsing is identical.
+"""
 import sys
 import os
 sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 
-import requests
-import time
+import json
+import subprocess
+import tempfile
 import numpy as np
 import pandas as pd
 import warnings
@@ -11,55 +32,18 @@ warnings.filterwarnings("ignore")
 from collections import Counter
 
 from scripts.utils.logger import get_logger
-from scripts.utils.config_loader import load_config
 
 logger = get_logger("osm_extractor")
-config = load_config("/srv/THESIS/energy_profiling_thesis/configs/config.yaml")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-OVERPASS_URL  = config.get("api", {}).get("overpass_url", "https://overpass-api.de/api/interpreter")
-REQUEST_DELAY = config.get("api", {}).get("overpass_request_delay", 1.5)
-MAX_RETRIES   = config.get("api", {}).get("overpass_max_retries", 3)
-TIMEOUT       = config.get("api", {}).get("overpass_timeout", 30)
+# ── Local OSM source ──────────────────────────────────────────────────────────
+OSM_DIR   = "/srv/THESIS/osm_planet"
+LOCAL_PBF = os.path.join(OSM_DIR, "osm_use.osm.pbf")   # filtered planet (live fallback)
+TILES_DIR = os.path.join(OSM_DIR, "tiles")             # pre-extracted 512 m tiles (fast path)
+OSMIUM    = "/home/ws/udyyk/.local/opt/osmenv/bin/osmium"
 
-# Mirror list — per-mirror independent circuit breakers.
-# lz4/z.overpass-api.de return non-200 from this server environment.
-# overpass.openstreetmap.ru has connect timeouts. kumi.systems is the only reliable mirror.
-# List kept extensible: add more mirrors here if connectivity improves.
-OVERPASS_MIRRORS = [
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
-]
-
-_OVERPASS_HEADERS = {
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Accept":       "application/json, */*",
-}
-
-# Per-mirror circuit breakers: mirror_url → epoch timestamp when breaker expires.
-# Replaces the single global breaker — a dead mirror no longer blocks healthy ones.
-_OVERPASS_CIRCUIT_TIMEOUT_S = 60
-_mirror_unreachable_until: dict = {}  # populated on first failure
-
-# Per-process response cache keyed by bbox tuple.
-# extract_osm_features and get_osm_energy_elements share the same query —
-# caching avoids a second HTTP round-trip per coordinate.
-_overpass_cache: dict = {}
-
-
-def circuit_breaker_wait():
-    """Block until at least one mirror's circuit breaker has expired."""
-    now = time.time()
-    available = [m for m in OVERPASS_MIRRORS if now >= _mirror_unreachable_until.get(m, 0.0)]
-    if available:
-        return
-    earliest = min(_mirror_unreachable_until.get(m, 0.0) for m in OVERPASS_MIRRORS)
-    remaining = earliest - now
-    if remaining > 0:
-        logger.info(f"Waiting {remaining:.0f}s for Overpass circuit breaker to expire...")
-        time.sleep(remaining + 1)
+def _tile_name(lat, lon):
+    """Deterministic tile filename for a coord (matches osm_batch_extract)."""
+    return f"{lat:.5f}_{lon:.5f}.osm.pbf"
 
 
 # ── Bounding Box Helper ───────────────────────────────────────────────────────
@@ -79,177 +63,151 @@ def generate_bbox(lat, lon, size_m=512):
     }
 
 
-# ── Query Builder ─────────────────────────────────────────────────────────────
+# ── Local OSM readers ─────────────────────────────────────────────────────────
 
-def build_overpass_query(min_lat, max_lat, min_lon, max_lon, segmap=False):
+
+def _geojson_to_elements(geojson_text):
+    """Parse osmium 'geojsonseq' output -> unified element list.
+
+    Every OSM tag is preserved verbatim as the feature's properties — nothing is
+    dropped, so segmap/detection/future code can read any tag, not just the schema.
     """
-    Build Overpass QL query to fetch energy-relevant OSM features
-    within a 512×512m bounding box.
-
-    segmap=True  — lean visual-only query (buildings + energy infra + aeroway).
-                   Drops highways, amenities, supermarkets that BORE needs but
-                   the segmap doesn't render, cutting payload ~60%.
-    segmap=False — full BORE feature-extraction query (default, unchanged).
-    """
-    bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
-
-    if segmap:
-        query = f"""
-[out:json][timeout:{TIMEOUT}];
-(
-  node["building"]({bbox});
-  way["building"]({bbox});
-  relation["building"]({bbox});
-  node["power"]({bbox});
-  way["power"]({bbox});
-  node["generator:source"]({bbox});
-  way["generator:source"]({bbox});
-  node["plant:source"]({bbox});
-  way["plant:source"]({bbox});
-  way["landuse"~"solar_farm|industrial"]({bbox});
-  node["man_made"="pipeline"]({bbox});
-  way["man_made"="pipeline"]({bbox});
-  node["man_made"="petroleum_well"]({bbox});
-  node["man_made"="storage_tank"]({bbox});
-  way["man_made"="storage_tank"]({bbox});
-  node["man_made"="wind_turbine"]({bbox});
-  way["man_made"="wind_turbine"]({bbox});
-  node["man_made"="cooling_tower"]({bbox});
-  way["man_made"="cooling_tower"]({bbox});
-  node["man_made"="chimney"]({bbox});
-  way["man_made"="chimney"]({bbox});
-  node["waterway"="dam"]({bbox});
-  way["waterway"="dam"]({bbox});
-  way["aeroway"]({bbox});
-);
-out geom;
-"""
-    else:
-        query = f"""
-[out:json][timeout:{TIMEOUT}];
-(
-  way["building"]({bbox});
-  node["power"]({bbox});
-  way["power"]({bbox});
-  relation["power"]({bbox});
-  node["generator:source"]({bbox});
-  way["generator:source"]({bbox});
-  node["plant:source"]({bbox});
-  way["plant:source"]({bbox});
-  way["landuse"]({bbox});
-  node["waterway"]({bbox});
-  way["waterway"]({bbox});
-  node["amenity"~"hospital|school|charging_station"]({bbox});
-  way["amenity"~"hospital|school|charging_station"]({bbox});
-);
-out geom;
-"""
-    return query.strip()
-
-
-# ── Request Handler ───────────────────────────────────────────────────────────
-
-def send_overpass_request(query, overpass_url=None):
-    """
-    POST query to Overpass API using parallel mirror racing + circuit breaker.
-
-    All mirrors are tried concurrently; the first successful 200 response wins
-    and cancels the others. This eliminates the sequential 8s-per-mirror wait
-    that occurred when some mirrors were temporarily down.
-
-    Response cache: identical queries within the same process return cached
-    elements — extract_osm_features and get_osm_energy_elements share one query
-    per coordinate, so the second call costs nothing.
-
-    Circuit breaker: if all mirrors fail, subsequent calls return [] immediately
-    for _OVERPASS_CIRCUIT_TIMEOUT_S seconds.
-    """
-    import time as _t
-    import concurrent.futures
-    global _mirror_unreachable_until, _overpass_cache
-
-    if query in _overpass_cache:
-        return _overpass_cache[query]
-
-    # Use only mirrors not currently in their individual circuit breaker
-    if overpass_url:
-        mirrors = [overpass_url]
-    else:
-        now = _t.time()
-        mirrors = [m for m in OVERPASS_MIRRORS if now >= _mirror_unreachable_until.get(m, 0.0)]
-        if not mirrors:
-            logger.info("All Overpass mirrors in circuit breaker — returning empty")
-            return []
-
-    _MIRROR_TIMEOUT = 45  # per-mirror timeout — allow server up to 45s before giving up
-
-    def _try_mirror(url):
-        resp = requests.post(
-            url,
-            data={"data": query},
-            headers=_OVERPASS_HEADERS,
-            timeout=_MIRROR_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            return url, resp.json().get("elements", [])
-        return url, None  # non-200 → treated as failure
-
-    elements = None
-    winning_url = None
-    failed_mirrors = []
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(mirrors)) as pool:
-        futures = {pool.submit(_try_mirror, url): url for url in mirrors}
+    from shapely.geometry import shape
+    elements = []
+    for line in geojson_text.splitlines():
+        line = line.strip().lstrip("\x1e")
+        if not line:
+            continue
         try:
-            for future in concurrent.futures.as_completed(futures, timeout=_MIRROR_TIMEOUT + 2):
-                url = futures[future]
-                try:
-                    _, result = future.result()
-                    if result is not None:
-                        elements    = result
-                        winning_url = url
-                        break  # first 200 wins
-                    else:
-                        failed_mirrors.append(url)
-                        logger.warning(f"Mirror {url} error: non-200 response")
-                except Exception as exc:
-                    failed_mirrors.append(url)
-                    logger.warning(f"Mirror {url} error: {exc}")
-        except concurrent.futures.TimeoutError:
-            failed_mirrors.extend(futures.values())
-            logger.warning("All mirrors timed out in parallel race")
+            f = json.loads(line)
+            elements.append({"tags": f.get("properties", {}) or {},
+                             "geom": shape(f["geometry"]) if f.get("geometry") else None})
+        except Exception:
+            continue
+    return elements
 
-    # Open per-mirror circuit breakers only for mirrors that actually failed
-    for url in failed_mirrors:
-        _mirror_unreachable_until[url] = _t.time() + _OVERPASS_CIRCUIT_TIMEOUT_S
 
-    if elements is not None:
-        logger.info(f"Overpass OK [{winning_url}] — {len(elements)} elements")
-        _mirror_unreachable_until[winning_url] = 0.0  # reset winning mirror's breaker
-        _overpass_cache[query] = elements
-        return elements
+def _read_tile(tile_path):
+    """FAST path (~5-12 ms): export a pre-extracted 512 m tile, full tags."""
+    out = subprocess.run([OSMIUM, "export", tile_path, "-f", "geojsonseq"],
+                         capture_output=True, text=True).stdout
+    return _geojson_to_elements(out)
 
-    logger.error(f"All Overpass mirrors failed — circuit breaker opened for {_OVERPASS_CIRCUIT_TIMEOUT_S}s")
+
+def _read_pbf_extract(min_lat, max_lat, min_lon, max_lon):
+    """Live fallback: carve the bbox out of the FULL planet (complete tags) on demand.
+
+    Slower (scans the source), used only when no pre-extracted tile exists.
+    """
+    src = os.path.join(OSM_DIR, "planet-latest.osm.pbf")
+    if not os.path.exists(src):
+        src = LOCAL_PBF
+    with tempfile.NamedTemporaryFile(suffix=".osm.pbf") as tmp:
+        subprocess.run(
+            [OSMIUM, "extract", "-b", f"{min_lon},{min_lat},{max_lon},{max_lat}",
+             src, "-o", tmp.name, "--overwrite", "-s", "smart"],
+            check=True, capture_output=True,
+        )
+        out = subprocess.run([OSMIUM, "export", tmp.name, "-f", "geojsonseq"],
+                             capture_output=True, text=True).stdout
+    return _geojson_to_elements(out)
+
+
+def read_local_osm(min_lat, max_lat, min_lon, max_lon, lat=None, lon=None):
+    """Return a unified element list [{'tags': {...}, 'geom': shapely-or-None}, ...].
+
+    FAST path: read the pre-extracted 512 m tile for this coord (~5-12 ms, full tags).
+    FALLBACK: live osmium extract from the full planet if the tile isn't present.
+
+    lat/lon: the ORIGINAL coordinate, if the caller has it — used as-is for the tile
+    filename lookup. Prefer this over the (min_lat+max_lat)/2 reconstruction below:
+    some callers (e.g. generate_bbox) round min/max independently to 6dp, and
+    averaging two independently-rounded edges back together doesn't always
+    round-trip to the same 5dp value osm_batch_extract.py used to name the tile —
+    a coordinate landing near a rounding boundary gets a false "tile missing" and
+    falls all the way through to a live multi-minute rescan of the full planet
+    (found 2026-08-10 chasing an 18-coordinate test run stall on "Dense Urban").
+    """
+    if lat is None or lon is None:
+        lat = (min_lat + max_lat) / 2
+        lon = (min_lon + max_lon) / 2
+    tile = os.path.join(TILES_DIR, _tile_name(lat, lon))
+    if os.path.exists(tile):
+        try:
+            return _read_tile(tile)
+        except Exception as exc:
+            logger.warning(f"Tile read failed ({exc}) — falling back to live extract")
+    if os.path.exists(LOCAL_PBF) or os.path.exists(os.path.join(OSM_DIR, "planet-latest.osm.pbf")):
+        return _read_pbf_extract(min_lat, max_lat, min_lon, max_lon)
+    logger.error(f"No local OSM source found (tile in {TILES_DIR} / {LOCAL_PBF})")
     return []
+
+
+# ── Compatibility shims for map generators (segmap / detection / ghsl) ────────
+# These callers were written for the old Overpass "out geom" element format
+# ({type, tags, geometry:[{lat,lon}]}). The offline reader returns shapely geoms,
+# so we convert here and the map parsers (extract_osm_buildings / extract_osm_infra)
+# keep working unchanged.
+
+def circuit_breaker_wait():
+    """No-op. Offline OSM has no rate limit / circuit breaker. Kept for API parity."""
+    return None
+
+
+def _shapely_to_overpass_elements(elements):
+    """Convert offline elements [{'tags', 'geom'(shapely)}] → Overpass 'out geom'
+    format [{type, tags, geometry:[{lat,lon}]} | {type:node, lat, lon, tags}]."""
+    def ring(coords):
+        return [{"lat": float(y), "lon": float(x)} for x, y in coords]
+
+    out = []
+    for el in elements:
+        tags = el.get("tags") or {}
+        geom = el.get("geom")
+        if geom is None:
+            continue
+        gt = geom.geom_type
+        if gt == "Point":
+            out.append({"type": "node", "tags": tags,
+                        "lat": float(geom.y), "lon": float(geom.x)})
+        elif gt == "LineString":
+            out.append({"type": "way", "tags": tags, "geometry": ring(geom.coords)})
+        elif gt == "Polygon":
+            out.append({"type": "way", "tags": tags, "geometry": ring(geom.exterior.coords)})
+        elif gt in ("MultiPolygon", "MultiLineString", "GeometryCollection"):
+            for sub in geom.geoms:
+                st = sub.geom_type
+                if st == "Polygon":
+                    out.append({"type": "way", "tags": tags, "geometry": ring(sub.exterior.coords)})
+                elif st == "LineString":
+                    out.append({"type": "way", "tags": tags, "geometry": ring(sub.coords)})
+                elif st == "Point":
+                    out.append({"type": "node", "tags": tags,
+                                "lat": float(sub.y), "lon": float(sub.x)})
+    return out
+
+
+def fetch_osm_elements_offline(min_lat, max_lat, min_lon, max_lon, lat=None, lon=None):
+    """Offline replacement for the old Overpass fetch — returns Overpass-format
+    elements for the bbox, read from the local planet tile (live fallback if absent)."""
+    return _shapely_to_overpass_elements(
+        read_local_osm(min_lat, max_lat, min_lon, max_lon, lat=lat, lon=lon))
 
 
 # ── Response Parser ───────────────────────────────────────────────────────────
 
 def parse_osm_response(elements):
     """
-    Parse raw Overpass API elements into a flat feature dict.
+    Parse local-OSM elements into a flat feature dict.
 
-    Design rules:
+    Each element is {'tags': {...}, 'geom': ...}; only `tags` is used here.
+
+    Design rules (unchanged):
       - Absent tag      → None   (stripped from output by extract_osm_features)
       - Boolean feature → True if present, None if absent  (never False)
-        Reason: None means "no data", False would mean "confirmed absent"
-                which we cannot know from OSM alone.
       - Count feature   → integer (0 is valid for building_count)
       - Multi-value     → comma-separated unique values
-      - Numeric         → float rounded to 2dp, or None
     """
-
-    # ── Accumulators ──────────────────────────────────────────────────────────
     buildings         = []
     power_plants      = []
     power_substations = []
@@ -266,11 +224,9 @@ def parse_osm_response(elements):
         if not tags:
             continue
 
-        # ── Buildings ─────────────────────────────────────────────────────────
         if "building" in tags:
             buildings.append(tags)
 
-        # ── Power ─────────────────────────────────────────────────────────────
         power_val = tags.get("power")
         if power_val == "plant":
             power_plants.append(tags)
@@ -281,35 +237,25 @@ def parse_osm_response(elements):
         elif power_val == "tower":
             power_towers.append(tags)
 
-        # ── Generator and plant sources ───────────────────────────────────────
         if "generator:source" in tags:
             generator_sources.append(tags["generator:source"])
         if "plant:source" in tags:
             plant_sources.append(tags["plant:source"])
 
-        # ── Land use ──────────────────────────────────────────────────────────
         if "landuse" in tags:
             landuses.append(tags["landuse"])
 
-        # ── Waterway ──────────────────────────────────────────────────────────
         if "waterway" in tags:
             waterways.append(tags["waterway"])
 
-        # ── Amenities ─────────────────────────────────────────────────────────
         amenity_val = tags.get("amenity")
         if amenity_val in ("hospital", "school", "charging_station"):
             amenities.append(amenity_val)
 
-    # ── Helper functions ──────────────────────────────────────────────────────
-
     def most_common(lst):
-        """Most frequent value, or None if list is empty."""
-        if not lst:
-            return None
-        return Counter(lst).most_common(1)[0][0]
+        return Counter(lst).most_common(1)[0][0] if lst else None
 
     def unique_joined(lst):
-        """Unique values as comma-separated string, or None if empty."""
         if not lst:
             return None
         seen = []
@@ -319,25 +265,18 @@ def parse_osm_response(elements):
         return ",".join(seen)
 
     def presence(lst):
-        """True if list is non-empty, None otherwise."""
         return True if lst else None
-
-    # ── Building sub-features ─────────────────────────────────────────────────
 
     building_types = [
         b.get("building") for b in buildings
         if b.get("building") not in (None, "yes")
     ]
-
     building_start_dates = [b.get("start_date")   for b in buildings if b.get("start_date")]
     roof_shapes          = [b.get("roof:shape")    for b in buildings if b.get("roof:shape")]
     roof_materials       = [b.get("roof:material") for b in buildings if b.get("roof:material")]
     roof_colours         = [b.get("roof:colour")   for b in buildings if b.get("roof:colour")]
 
-    # ── Final feature dict ────────────────────────────────────────────────────
     features = {
-
-        # ── Building ──────────────────────────────────────────────────────────
         "osm_building_count":      len(buildings),
         "osm_building_type":       most_common(building_types),
         "osm_building_start_date": min(building_start_dates) if building_start_dates else None,
@@ -345,7 +284,6 @@ def parse_osm_response(elements):
         "osm_roof_material":       most_common(roof_materials),
         "osm_roof_colour":         most_common(roof_colours),
 
-        # ── Power infrastructure ──────────────────────────────────────────────
         "osm_power_plant":         presence(power_plants),
         "osm_power_substation":    presence(power_substations),
         "osm_power_line":          presence(power_lines),
@@ -353,14 +291,11 @@ def parse_osm_response(elements):
         "osm_generator_source":    unique_joined(generator_sources),
         "osm_plant_source":        unique_joined(plant_sources),
 
-        # ── Land and water ────────────────────────────────────────────────────
         "osm_landuse":             most_common(landuses),
         "osm_waterway":            most_common(waterways),
 
-        # ── Amenities ────────────────────────────────────────────────────────
         "osm_amenity":             unique_joined(amenities),
     }
-
     return features
 
 
@@ -368,43 +303,34 @@ def parse_osm_response(elements):
 
 def extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Full extraction pipeline for one coordinate:
-      1. Build Overpass query for the 256×256m bounding box
-      2. Send POST request to Overpass API (with retry logic)
-      3. Parse JSON response into flat feature dict
-      4. Strip all None values — absent key = no data (consistent with all extractors)
+    Offline extraction pipeline for one coordinate:
+      1. Read energy-relevant OSM elements in the 512m bbox from the LOCAL planet
+      2. Parse into the flat feature dict (same schema as before)
+      3. Strip all None values — absent key = no data (null contract preserved)
          Exception: osm_building_count kept even if 0 — 0 is valid data
-      5. Return dict with coordinate metadata prepended
+      4. Return dict with coordinate metadata prepended
 
-    Null contract:
+    Null contract (unchanged):
       - Feature present in OSM   → key: value in dict
       - Feature absent from OSM  → key not in dict at all
-      - CSV output               → cell empty
-      - JSON output              → key absent from coordinate object
     """
-    logger.info(f"Extracting OSM features for ({lat}, {lon})")
+    logger.info(f"Extracting OSM features for ({lat}, {lon}) [offline]")
 
-    query    = build_overpass_query(min_lat, max_lat, min_lon, max_lon)
-    elements = send_overpass_request(query)
+    elements = read_local_osm(min_lat, max_lat, min_lon, max_lon, lat=lat, lon=lon)
 
     if not elements:
         logger.warning(
-            f"Zero elements returned for ({lat}, {lon}) — "
-            "all features will be absent (sparse OSM region)"
+            f"Zero elements for ({lat}, {lon}) — all features absent "
+            "(sparse OSM region or coverage gap)"
         )
 
     features = parse_osm_response(elements)
 
-    # ── Strip None values ──────────────────────────────────────────────────────
-    # Absent key = no data — consistent with GHSL, Solar Atlas, WorldCover,
-    # and VIIRS extractors.
-    # osm_building_count is kept even when 0 — 0 buildings is valid information.
     features = {
         k: v for k, v in features.items()
         if v is not None or k == "osm_building_count"
     }
 
-    # ── Prepend coordinate metadata ───────────────────────────────────────────
     result = {
         "lat":               lat,
         "lon":               lon,
@@ -412,34 +338,27 @@ def extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     }
     result.update(features)
 
-    populated = len(features) - 1   # subtract osm_building_count from meaningful count
     logger.info(
         f"({lat}, {lon}) — {len(elements)} elements → "
         f"{len(features)} features populated "
         f"(building_count={features.get('osm_building_count', 0)})"
     )
-
     return result
 
 
 # ── M3 Support: energy element positions for Gaussian density signal ─────────
 
-# Energy relevance weight per OSM tag — used to modulate Gaussian kernel
 _ELEMENT_WEIGHTS = {
-    # Power infrastructure
     ("power", "plant"):       3.0,
     ("power", "substation"):  2.5,
     ("power", "generator"):   2.5,
     ("power", "line"):        1.5,
     ("power", "tower"):       1.0,
     ("power", "pole"):        0.8,
-    # Man-made energy infrastructure
     ("man_made", "petroleum_well"): 3.0,
     ("man_made", "storage_tank"):   2.0,
     ("man_made", "pipeline"):       1.5,
-    # Water / energy
     ("waterway", "dam"):      2.5,
-    # Land use
     ("landuse", "industrial"):   2.0,
     ("landuse", "commercial"):   1.5,
     ("landuse", "farmland"):     0.8,
@@ -470,25 +389,15 @@ def _get_element_energy_weight(tags):
 
 def get_osm_energy_elements(lat, lon, min_lat, max_lat, min_lon, max_lon):
     """
-    Return a list of energy-relevant OSM element positions for M3 Gaussian density.
+    Return energy-relevant OSM element positions for M3 Gaussian density.
 
-    Each entry: {"lat": float, "lon": float, "weight": float}
-
-    Uses the same Overpass query as extract_osm_features() so no extra API call
-    is needed — just re-run the query (caller caches if needed).
-    Null contract: returns empty list if no elements or API unavailable.
+    Each entry: {"lat": float, "lon": float, "weight": float}, positioned at the
+    element's representative point (centroid for ways/areas).
+    Null contract: empty list if no elements or local source unavailable.
     """
-    query    = build_overpass_query(min_lat, max_lat, min_lon, max_lon)
-    elements = send_overpass_request(query)
-
+    elements = read_local_osm(min_lat, max_lat, min_lon, max_lon, lat=lat, lon=lon)
     if not elements:
         return []
-
-    # Build node-id → (lat, lon) lookup from skeleton nodes (member nodes of ways)
-    node_positions = {}
-    for el in elements:
-        if el.get("type") == "node" and "lat" in el and "lon" in el:
-            node_positions[el["id"]] = (el["lat"], el["lon"])
 
     result = []
     for el in elements:
@@ -498,22 +407,14 @@ def get_osm_energy_elements(lat, lon, min_lat, max_lat, min_lon, max_lon):
         weight = _get_element_energy_weight(tags)
         if weight <= 0:
             continue
-
-        if el.get("type") == "node" and "lat" in el:
-            result.append({"lat": el["lat"], "lon": el["lon"], "weight": weight})
-
-        elif el.get("type") == "way" and "nodes" in el:
-            member_lats, member_lons = [], []
-            for nid in el["nodes"]:
-                if nid in node_positions:
-                    member_lats.append(node_positions[nid][0])
-                    member_lons.append(node_positions[nid][1])
-            if member_lats:
-                result.append({
-                    "lat":    float(np.mean(member_lats)),
-                    "lon":    float(np.mean(member_lons)),
-                    "weight": weight,
-                })
+        geom = el.get("geom")
+        if geom is None:
+            continue
+        try:
+            pt = geom.representative_point()
+            result.append({"lat": float(pt.y), "lon": float(pt.x), "weight": weight})
+        except Exception:
+            continue
 
     logger.info(
         f"get_osm_energy_elements ({lat}, {lon}): "
@@ -545,20 +446,17 @@ if __name__ == "__main__":
         )
         result["stratum"] = stratum
         results.append(result)
-        time.sleep(REQUEST_DELAY)
 
     df = pd.DataFrame(results)
-
-    # Columns that start with osm_
     feature_cols = [c for c in df.columns if c.startswith("osm_")]
 
-    print("\n=== OSM Extraction Test — Results Summary ===")
+    print("\n=== OSM Extraction Test (OFFLINE) — Results Summary ===")
+    print(f"Source             : {'GeoPackage (fast)' if os.path.exists(LOCAL_GPKG) else 'osmium extract (fallback)'}")
     print(f"Coordinates tested : {len(df)}")
     print(f"Features per coord : {len(feature_cols)}")
 
     print("\nFeature coverage per coordinate:")
     for _, row in df.iterrows():
-        # pd.notna handles both None and NaN correctly
         populated = sum(
             1 for c in feature_cols
             if pd.notna(row.get(c)) and not (c == "osm_building_count" and row.get(c) == 0)
@@ -572,18 +470,6 @@ if __name__ == "__main__":
     print("\nBuilding counts:")
     for _, row in df.iterrows():
         print(f"  {row['stratum']:25s}: {int(row.get('osm_building_count', 0))} buildings")
-
-    print("\nPower infrastructure found:")
-    power_fields = [
-        "osm_power_plant", "osm_power_substation", "osm_power_line",
-        "osm_power_tower", "osm_generator_source", "osm_plant_source"
-    ]
-    for _, row in df.iterrows():
-        found = [
-            f.replace("osm_", "") for f in power_fields
-            if pd.notna(row.get(f))
-        ]
-        print(f"  {row['stratum']:25s}: {found if found else 'none'}")
 
     print("\nKey features table:")
     pd.set_option("display.max_columns", None)

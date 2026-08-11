@@ -1,4 +1,16 @@
 """
+DEPRECATED (2026-08-10) — superseded by run_pipeline.py's `stream` stage.
+
+Do not run this directly: it reads straight from filtered_strata_sample.csv (BORE's full
+raw pool), bypassing the `select` stage entirely (no tier-balanced subsampling) and the
+`osm_carve` stage (no pre-carved tiles, every OSM read falls back to a live ~15-20 min
+full-planet scan per coordinate). It also does extraction only — no maps, no captions,
+no process-pool parallelism. Kept only as a reference for what per-coordinate extraction
+looked like before the 4-stage bore/select/osm_carve/stream architecture existed.
+
+Use `python run_pipeline.py --stages stream` instead.
+
+── Original docstring ──
 PORE runner — Per-coordinate feature extraction for BORE-verified anchors.
 
 Input:  outputs/csv/filtered_strata_sample.csv

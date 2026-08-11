@@ -1,4 +1,5 @@
 venv/
+venv_bore/
 .env
 __pycache__/
 *.pyc
@@ -23,6 +24,12 @@ outputs/
 
 # Tiles cache
 tiles/
+
+# MS Buildings tile cache (downloaded automatically, do not commit)
+cache/
+
+# Local tool config
+.claude/
 
 # OS
 .DS_Store

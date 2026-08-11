@@ -1,31 +1,30 @@
 # Core geo
-geopandas==0.14.3
-rasterio==1.3.9
-fiona==1.9.6          # pinned — 1.10.x breaks geopandas 0.14.3
-shapely==2.0.3
-pyproj==3.6.1
+rasterio==1.5.0
+fiona==1.10.1          # only needed for BORE (real_anchor_finder.py's ocean/GHSL shapefiles) —
+                        # not installed in the system Python the rest of the pipeline runs on;
+                        # see venv_bore/ for a working environment that has it
+shapely==2.1.2
+pyproj==3.7.2
+mercantile==1.2.1      # segmap_generator.py, msft_buildings_extractor.py
 
 # Data
-numpy==1.26.4
-pandas==2.2.1
-scipy==1.13.0
+numpy==2.5.1
+pandas==3.0.5
+scipy==1.18.0
 
 # APIs
-requests==2.31.0
-earthengine-api==1.7.18
-groq==1.1.1
+requests==2.34.2
+earthengine-api==1.7.37
+groq==1.6.0
 
 # HTML parsing (coordinate_filter.py)
-beautifulsoup4==4.12.3
+beautifulsoup4==4.15.0
 
 # Config / env
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 pyyaml==6.0.1
 
 # Notebooks / viz
-folium==0.16.0
-matplotlib==3.8.4
-tqdm==4.66.2
-jupyter==1.0.0
-ipykernel==6.29.4
-notebook==7.1.3
+folium==0.16.0          # day_verify.ipynb, raw_data_explorer_executed.ipynb, zensus_explorer.ipynb
+matplotlib==3.11.1
+ipykernel==7.3.0

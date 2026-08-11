@@ -17,14 +17,17 @@ sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 import mercantile
 from PIL import Image
+from pyproj import Transformer
+from rasterio.windows import from_bounds as rasterio_from_bounds
 
 from scripts.extractors.worldcover_extractor import fetch_worldcover_pixels, WORLDCOVER_CLASSES
 from scripts.extractors.osm_extractor import (
-    build_overpass_query, send_overpass_request, circuit_breaker_wait
+    fetch_osm_elements_offline, circuit_breaker_wait
 )
 from scripts.extractors.msft_buildings_extractor import fetch_msft_buildings
 from scripts.utils.logger import get_logger
@@ -32,9 +35,27 @@ from scripts.utils.logger import get_logger
 logger = get_logger("segmap_generator")
 
 BASE       = "/srv/THESIS/energy_profiling_thesis"
-OUTPUT_DIR = os.path.join(BASE, "outputs/maps")
+OUTPUT_DIR = os.path.join(BASE, "outputs/maps/segmaps")
 ESRI_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 TILE_ZOOM  = 17
+BG         = "#0f172a"
+
+# ── GHSL population/age raster + colormaps (shared with detection_map.py's
+# render_ghsl_det via import) ───────────────────────────────────────────────────
+_TO_MOLL = Transformer.from_crs("EPSG:4326", "ESRI:54009", always_xy=True)
+EPOCH_RASTER = os.path.join(BASE, "rasters/ghsl/built_epochs/GHS_BUILT_FIRST_EPOCH.tif")
+ESA_BUILT_CODE = 50   # ESA WorldCover built-up class
+
+CMAP_POP = mcolors.LinearSegmentedColormap.from_list(
+    "pop", ["#fff5f5", "#ff9999", "#ff2222", "#880000", "#110000"])
+POP_VMIN, POP_VMAX = 10, 500    # persons per 100m cell — below 10 = uninhabited, skip
+NORM_POP = mcolors.LogNorm(vmin=POP_VMIN, vmax=POP_VMAX, clip=True)
+POP_MIN, POP_MAX = POP_VMIN, POP_VMAX
+POP_SKIP_BELOW = 10
+
+EPOCH_MIN, EPOCH_MAX = 1975, 2020
+CMAP_AGE = mcolors.LinearSegmentedColormap.from_list(
+    "age", ["#660000", "#cc0000", "#ff6666", "#ffcccc", "#ffffff"])
 
 # ── ESA WorldCover colours ────────────────────────────────────────────────────
 WC_COLOURS = {
@@ -59,8 +80,6 @@ OSM_CLR = {
     "power_pole":       "#ffe566",
     "substation":       "#ff7700",
     "power_plant":      "#ff0000",
-    "solar_gen":        "#fff000",
-    "solar_farm":       "#ffe033",   # landuse=solar_farm area polygon
     "wind_gen":         "#00ffff",
     "wind_turbine":     "#44ffee",   # man_made=wind_turbine
     "hydro_gen":        "#00aaff",
@@ -88,8 +107,6 @@ ALL_COORDS = [
     ("Agrivoltaics (Solar + Farmland)", 51.398581,  12.078941),
     ("Industrial + Forest",             58.164353,  54.986046),
     ("Hydropower Reservoir",           -26.893351, -49.060331),
-    ("Utility-scale Solar Farm",        35.78384, -114.992747),
-    ("Airport / Aviation",              47.60318,    7.52505),
     ("Agricultural + Water",            34.265156, 119.997053),
     ("Coastal + Agricultural",          10.25229,  124.770697),
     ("Mangrove + Industrial",            4.682099, 118.253752),
@@ -361,7 +378,7 @@ def _filter_infra_water(infra, pixels, min_lat, max_lat, min_lon, max_lon):
     """Discard area-type infra polygons (lat, lon) whose centroid is on ESA water."""
     if pixels is None:
         return infra
-    AREA_KEYS = {"substation", "power_plant", "solar_gen", "solar_farm",
+    AREA_KEYS = {"substation", "power_plant",
                  "wind_gen", "hydro_gen", "industrial_area",
                  "storage_tank", "wind_turbine", "petroleum_well",
                  "cooling_tower", "chimney"}
@@ -391,7 +408,7 @@ def _point_in_ring(px, py, ring_lonlat):
 # Infra types that can be matched to a building footprint and coloured.
 # Only types that represent actual energy structures placed inside a building shell.
 _BUILDING_INFRA_TYPES = [
-    "substation", "power_plant", "solar_gen", "hydro_gen",
+    "substation", "power_plant", "hydro_gen",
     "storage_tank", "cooling_tower", "chimney", "petroleum_well",
 ]
 
@@ -494,7 +511,7 @@ def build_esa_overlay(pixels):
         r = int(hx[1:3], 16) / 255
         g = int(hx[3:5], 16) / 255
         b = int(hx[5:7], 16) / 255
-        rgba[pixels == code] = [r, g, b, 0.35]
+        rgba[pixels == code] = [r, g, b, 0.65]
     rgba[pixels == 0, 3] = 0.0
     return rgba
 
@@ -549,18 +566,14 @@ def extract_osm_infra(elements):
         elif pwr == "substation":
             infra["substation"].append(geo(coords, radius_deg=0.00027))
         elif pwr == "plant":
-            if "solar" in ps:
-                infra["solar_gen"].append(geo(coords, radius_deg=0.00022))
-            elif "wind" in ps:
+            if "wind" in ps:
                 infra["wind_gen"].append(geo(coords, radius_deg=0.00025))
             elif "hydro" in ps or "water" in ps:
                 infra["hydro_gen"].append(geo(coords, radius_deg=0.00022))
-            else:
+            elif "solar" not in ps:
                 infra["power_plant"].append(geo(coords, radius_deg=0.00035))
         elif pwr == "generator" or "generator:source" in tags:
-            if "solar" in gs:
-                infra["solar_gen"].append(geo(coords, radius_deg=0.00022))
-            elif "wind" in gs:
+            if "wind" in gs:
                 infra["wind_gen"].append(geo(coords, radius_deg=0.00025))
             elif "hydro" in gs or "water" in gs:
                 infra["hydro_gen"].append(geo(coords, radius_deg=0.00022))
@@ -584,9 +597,7 @@ def extract_osm_infra(elements):
             infra["dam"].append(coords)
 
         # Landuse areas
-        if lu == "solar_farm" and is_way and len(coords) >= 3:
-            infra["solar_farm"].append(coords)
-        elif lu == "industrial" and is_way and len(coords) >= 3:
+        if lu == "industrial" and is_way and len(coords) >= 3:
             infra["industrial_area"].append(coords)
 
         # Aeroway — aircraft parking areas and movement lines
@@ -613,10 +624,9 @@ def draw_overlays(ax, esri_img, pixels, ok,
 
     # OSM energy infra — polygon areas (drawn BEFORE buildings so outlines stay visible)
     # Large background fills (no edge outline — avoids border conflicts with building outlines)
-    FILL_ONLY = {"industrial_area", "aircraft_area", "solar_farm"}
+    FILL_ONLY = {"industrial_area", "aircraft_area"}
     POLY_TYPES = [
         "substation", "power_plant",
-        "solar_gen", "solar_farm",
         "wind_gen", "wind_turbine",
         "hydro_gen",
         "petroleum_well", "storage_tank",
@@ -721,8 +731,6 @@ def build_legend(pixels, ok, bldg_rings, vessel_rings, infra):
         "power_pole":     "pole",
         "substation":     "substation",
         "power_plant":    "power plant",
-        "solar_gen":      "solar generator",
-        "solar_farm":     "solar farm (landuse)",
         "wind_gen":       "wind generator",
         "wind_turbine":   "wind turbine",
         "hydro_gen":      "hydro generator",
@@ -755,7 +763,7 @@ def build_legend(pixels, ok, bldg_rings, vessel_rings, infra):
 # ── Rendering ─────────────────────────────────────────────────────────────────
 
 def render_pair(ax_orig, ax_seg, esri_img,
-                pixels, ok, bldg_rings, vessel_rings, infra,
+                pixels, ok,
                 min_lat, max_lat, min_lon, max_lon, name):
     BG = "#0f172a"
 
@@ -766,7 +774,7 @@ def render_pair(ax_orig, ax_seg, esri_img,
         ax.set_xticks([]); ax.set_yticks([])
         for sp in ax.spines.values(): sp.set_edgecolor("#334155")
 
-    # Left — ESRI only
+    # Left — ESRI satellite
     ax_orig.imshow(esri_img,
                    extent=[min_lon, max_lon, min_lat, max_lat],
                    origin="upper", zorder=1, aspect="auto")
@@ -775,20 +783,41 @@ def render_pair(ax_orig, ax_seg, esri_img,
     ax_orig.set_ylabel(name, color="#e2e8f0", fontsize=8,
                        fontfamily="monospace", labelpad=6)
 
-    # Right — overlays
+    # Right — ESA WorldCover land cover only
     ax_seg.imshow(esri_img,
                   extent=[min_lon, max_lon, min_lat, max_lat],
                   origin="upper", zorder=1, aspect="auto")
-    draw_overlays(ax_seg, esri_img, pixels, ok,
-                  bldg_rings, vessel_rings, infra, min_lat, max_lat, min_lon, max_lon)
+    if ok and pixels is not None:
+        ax_seg.imshow(build_esa_overlay(pixels),
+                      extent=[min_lon, max_lon, min_lat, max_lat],
+                      origin="upper", zorder=2, aspect="auto")
 
-    items = build_legend(pixels, ok, bldg_rings, vessel_rings, infra)
-    if items:
-        ax_seg.legend(handles=items, loc="lower left", facecolor=BG,
-                      labelcolor="#e2e8f0", fontsize=7, edgecolor="#334155",
-                      ncol=2, framealpha=0.92, borderpad=0.6)
-    ax_seg.set_title("ESA + MS buildings + OSM energy infra", color="#94a3b8",
+    # Legend — ESA classes present
+    if ok and pixels is not None:
+        import matplotlib.patches as mpatches
+        items = []
+        for code, hx in WC_COLOURS.items():
+            if code == 0 or not np.any(pixels == code):
+                continue
+            label = WORLDCOVER_CLASSES.get(code, str(code))
+            items.append(mpatches.Patch(color=hx, label=label))
+        if items:
+            ax_seg.legend(handles=items, loc="lower left", facecolor=BG,
+                          labelcolor="#e2e8f0", fontsize=7, edgecolor="#334155",
+                          ncol=2, framealpha=0.92, borderpad=0.6)
+    ax_seg.set_title("ESA WorldCover Land Cover", color="#94a3b8",
                      fontsize=8, fontfamily="monospace", pad=4)
+
+
+def fetch_osm_elements(name, min_lat, max_lat, min_lon, max_lon, lat=None, lon=None):
+    """
+    Fetch OSM elements for bbox — one call shared across all map generators.
+    OFFLINE: reads the local planet tile (live osmium-extract fallback). Returns
+    Overpass-format elements ({type, tags, geometry}) so the parsers stay unchanged.
+    """
+    elements = fetch_osm_elements_offline(min_lat, max_lat, min_lon, max_lon, lat=lat, lon=lon)
+    logger.info(f"[{name}] OSM (offline) {len(elements)} elements")
+    return elements or []
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -796,76 +825,210 @@ def render_pair(ax_orig, ax_seg, esri_img,
 def _fetch_all(name, lat, lon):
     min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
 
-    # ESRI tile image
     try:
         esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
     except Exception as e:
         logger.warning(f"[{name}] ESRI fetch failed: {e}")
         esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
 
-    # ESA WorldCover
     pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
 
-    # Buildings — Microsoft ML Footprints (primary)
+    return min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok
+
+
+# ── GHSL sampling (population / urbanisation-epoch) ────────────────────────────
+# Shared with detection_map.py's render_ghsl_det, which imports the functions and
+# colormaps below rather than duplicating them.
+
+def _moll_window(src, min_lat, max_lat, min_lon, max_lon):
+    """Convert WGS84 bbox to rasterio Window in Mollweide raster coords."""
+    xs, ys = _TO_MOLL.transform(
+        [min_lon, max_lon, min_lon, max_lon],
+        [min_lat, min_lat, max_lat, max_lat]
+    )
+    return rasterio_from_bounds(min(xs), min(ys), max(xs), max(ys), src.transform)
+
+
+def _read_ghsl_grid(raster_path, min_lat, max_lat, min_lon, max_lon,
+                    out_shape, nodata_val=-200.0):
+    """Read a GHSL Mollweide raster window and zoom to out_shape."""
     try:
-        bldg_rings = fetch_msft_buildings(min_lat, max_lat, min_lon, max_lon)
-        logger.info(f"[{name}] Microsoft buildings: {len(bldg_rings)}")
+        import rasterio
+        from scipy.ndimage import zoom
+        with rasterio.open(raster_path) as src:
+            win = _moll_window(src, min_lat, max_lat, min_lon, max_lon)
+            data = src.read(1, window=win).astype(np.float32)
+            nd = src.nodata if src.nodata is not None else nodata_val
+            data[data == nd] = 0.0
+            data[data < 0] = 0.0
+        if data.size == 0:
+            return np.zeros(out_shape, dtype=np.float32)
+        zh = out_shape[0] / max(data.shape[0], 1)
+        zw = out_shape[1] / max(data.shape[1], 1)
+        return zoom(data, (zh, zw), order=0).astype(np.float32)
     except Exception as e:
-        logger.warning(f"[{name}] Microsoft buildings failed: {e}")
-        bldg_rings = []
+        logger.warning(f"GHSL grid read failed ({raster_path}): {e}")
+        return np.zeros(out_shape, dtype=np.float32)
 
-    # OSM: energy infrastructure + buildings — retry until data arrives
-    infra = {k: [] for k in OSM_CLR}
-    MAX_OSM_TRIES = 8
-    for attempt in range(1, MAX_OSM_TRIES + 1):
-        try:
-            circuit_breaker_wait()
-            elements = send_overpass_request(
-                build_overpass_query(min_lat, max_lat, min_lon, max_lon, segmap=True))
-            if elements:
-                osm_bldgs = extract_osm_buildings(elements)
-                before = len(bldg_rings)
-                bldg_rings = _merge_building_rings(bldg_rings, osm_bldgs)
-                logger.info(f"[{name}] Buildings after MS+OSM merge: {len(bldg_rings)} "
-                            f"(MS={before}, OSM={len(osm_bldgs)})")
-                infra   = extract_osm_infra(elements)
-                n_infra = sum(len(v) for v in infra.values())
-                logger.info(f"[{name}] OSM infra: {n_infra}")
-                break
-            logger.warning(f"[{name}] OSM returned empty (attempt {attempt}/{MAX_OSM_TRIES})")
-        except Exception as e:
-            logger.warning(f"[{name}] OSM attempt {attempt}/{MAX_OSM_TRIES} failed: {e}")
-        if attempt < MAX_OSM_TRIES:
-            import time; time.sleep(5)
 
-    # Drop water-centroid detections (ML false positives — cranes, quay walls, etc.)
-    bldg_rings, _ = _split_buildings_water(
-        bldg_rings, pixels, min_lat, max_lat, min_lon, max_lon)
-    vessel_rings = []
-    infra = _filter_infra_water(infra, pixels, min_lat, max_lat, min_lon, max_lon)
-    infra = _filter_industrial_on_water(infra, pixels, min_lat, max_lat, min_lon, max_lon)
+def _sample_epoch_grid(min_lat, max_lat, min_lon, max_lon, out_shape):
+    return _read_ghsl_grid(EPOCH_RASTER, min_lat, max_lat, min_lon, max_lon, out_shape)
 
-    # Remove OSM block/complex outlines that contain 2+ individual building centroids
-    bldg_rings = _remove_shells(bldg_rings)
 
-    # Drop sub-18m² building polygons (ML noise, tiny courtyard artefacts)
-    bldg_rings = _filter_min_area(bldg_rings, lat)
+def _sample_pop_grid(min_lat, max_lat, min_lon, max_lon, out_shape):
+    pop_path = os.path.join(BASE,
+        "rasters/ghsl/population/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0.tif")
+    return _read_ghsl_grid(pop_path, min_lat, max_lat, min_lon, max_lon, out_shape)
 
-    return min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok, bldg_rings, vessel_rings, infra
+
+def _ax_base(ax, esri_img, min_lon, max_lon, min_lat, max_lat, title, ylabel=""):
+    ax.set_facecolor(BG)
+    ax.set_xlim(min_lon, max_lon); ax.set_ylim(min_lat, max_lat)
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values(): sp.set_edgecolor("#334155")
+    ax.imshow(esri_img, extent=[min_lon, max_lon, min_lat, max_lat],
+              origin="upper", zorder=1, aspect="auto")
+    ax.set_title(title, color="#94a3b8", fontsize=8, fontfamily="monospace", pad=4)
+    if ylabel:
+        ax.set_ylabel(ylabel, color="#e2e8f0", fontsize=8,
+                      fontfamily="monospace", labelpad=6)
+
+
+def _ghsl_segmap_overlay(pixels, ghsl_grid, cmap, vmin, vmax, norm=None):
+    """
+    Build RGBA overlay: built-up pixels coloured by GHSL value.
+    Non-built-up pixels use ESA colour at lower opacity.
+    """
+    h, w = pixels.shape
+    rgba = np.zeros((h, w, 4), dtype=np.float32)
+
+    # Non-built-up: ESA colour at 0.25 opacity
+    for code, hx in WC_COLOURS.items():
+        if code in (0, ESA_BUILT_CODE):
+            continue
+        mask = pixels == code
+        r = int(hx[1:3], 16) / 255
+        g = int(hx[3:5], 16) / 255
+        b = int(hx[5:7], 16) / 255
+        rgba[mask] = [r, g, b, 0.25]
+
+    # Built-up: GHSL colour
+    # For age variant (norm=None, vmin=EPOCH_MIN): cells at 1975 (pre-satellite era)
+    # shown as neutral grey — only post-1975 cells get the colour ramp.
+    built_mask = pixels == ESA_BUILT_CODE
+    if built_mask.any() and ghsl_grid is not None:
+        g_h, g_w = ghsl_grid.shape
+        if (g_h, g_w) != (h, w):
+            from scipy.ndimage import zoom
+            ghsl_grid = zoom(ghsl_grid, (h / g_h, w / g_w), order=0)
+        n = norm if norm is not None else mcolors.Normalize(vmin=vmin, vmax=vmax, clip=True)
+        colours = cmap(n(ghsl_grid))
+        colours[..., 3] = 0.7
+
+        # For population: skip cells below threshold (uninhabited) — leave transparent
+        if norm is not None:  # pop uses LogNorm
+            low_pop = (ghsl_grid < POP_SKIP_BELOW) & built_mask
+            colours[low_pop, 3] = 0.0  # transparent
+
+        # Option B: for age, grey-out pre-1975 cells (pre-existing, indeterminate)
+        if norm is None and vmin == EPOCH_MIN:
+            pre_existing = (ghsl_grid <= EPOCH_MIN) & built_mask
+            colours[pre_existing] = [0.45, 0.45, 0.45, 0.45]
+
+        rgba[built_mask] = colours[built_mask]
+
+    return rgba
+
+
+def render_ghsl_segmap(name, lat, lon, variant="pop", save=True):
+    """
+    variant: 'pop' = population density, 'age' = urbanisation epoch
+    """
+    min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
+    logger.info(f"[{name}] GHSL {variant} segmap...")
+
+    try:
+        esri_img = fetch_esri_img(min_lon, min_lat, max_lon, max_lat)
+    except Exception as e:
+        logger.warning(f"[{name}] ESRI failed: {e}")
+        esri_img = np.zeros((512, 512, 3), dtype=np.uint8)
+
+    pixels, _, ok = fetch_worldcover_pixels(min_lat, max_lat, min_lon, max_lon, lat, lon)
+
+    h, w = esri_img.shape[:2]
+    if variant == "pop":
+        ghsl_grid = _sample_pop_grid(min_lat, max_lat, min_lon, max_lon, (h, w))
+        ghsl_grid = np.where(ghsl_grid > 0, ghsl_grid, 1).astype(np.float32)
+        cmap, vmin, vmax, norm = CMAP_POP, POP_MIN, POP_MAX, NORM_POP
+        title = "Population Density (GHSL 2020)"
+        legend_label = "Population (persons per 100m cell, log scale)"
+    else:
+        ghsl_grid = _sample_epoch_grid(min_lat, max_lat, min_lon, max_lon, (h, w))
+        cmap, vmin, vmax, norm = CMAP_AGE, EPOCH_MIN, EPOCH_MAX, None
+        title = "Urbanisation Epoch (GHSL 1975–2020)"
+        legend_label = "First built-up epoch"
+
+    fig, (ax_orig, ax_seg) = plt.subplots(1, 2, figsize=(14, 7))
+    fig.patch.set_facecolor(BG)
+
+    _ax_base(ax_orig, esri_img, min_lon, max_lon, min_lat, max_lat,
+             "ESRI World Imagery", ylabel=name)
+    _ax_base(ax_seg, esri_img, min_lon, max_lon, min_lat, max_lat, title)
+
+    if ok and pixels is not None:
+        overlay = _ghsl_segmap_overlay(pixels, ghsl_grid, cmap, vmin, vmax, norm=norm)
+        ax_seg.imshow(overlay, extent=[min_lon, max_lon, min_lat, max_lat],
+                      origin="upper", zorder=2, aspect="auto")
+
+        # Colorbar
+        cb_norm = norm if norm is not None else mcolors.Normalize(vmin=vmin, vmax=vmax)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=cb_norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax_seg, fraction=0.03, pad=0.02)
+        cbar.set_label(legend_label, color="#e2e8f0", fontsize=7)
+        cbar.ax.yaxis.set_tick_params(color="#e2e8f0")
+        plt.setp(cbar.ax.yaxis.get_ticklabels(), color="#e2e8f0", fontsize=6)
+
+        # Non-built-up legend
+        items = []
+        for code, hx in WC_COLOURS.items():
+            if code in (0, ESA_BUILT_CODE) or not np.any(pixels == code):
+                continue
+            items.append(mpatches.Patch(color=hx, alpha=0.4,
+                                        label=WORLDCOVER_CLASSES.get(code, str(code))))
+        if items:
+            ax_seg.legend(handles=items, loc="lower left", facecolor=BG,
+                          labelcolor="#e2e8f0", fontsize=6, edgecolor="#334155",
+                          ncol=2, framealpha=0.9)
+
+    fig.suptitle(f"{name}  ·  {lat:.5f}, {lon:.5f}  ·  512 m bbox",
+                 color="#e2e8f0", fontsize=10, y=1.01)
+    plt.tight_layout(w_pad=0.4)
+
+    if save:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        slug = (name.replace(" ", "_").replace("/", "-")
+                    .replace("+", "plus").replace("(", "").replace(")", ""))
+        out = os.path.join(OUTPUT_DIR, f"{slug}_{variant}_segmap.png")
+        plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
+        plt.close(fig)
+        logger.info(f"Saved: {out}")
+        return out
+    return fig
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_single(lat, lon, stratum_name="anchor", save=True):
     logger.info(f"[{stratum_name}] Processing...")
-    min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok, bldg_rings, vessel_rings, infra = \
+    min_lat, max_lat, min_lon, max_lon, esri_img, pixels, ok = \
         _fetch_all(stratum_name, lat, lon)
 
     fig, (ax_orig, ax_seg) = plt.subplots(1, 2, figsize=(14, 7))
     fig.patch.set_facecolor("#0f172a")
     for ax in (ax_orig, ax_seg): ax.set_facecolor("#0f172a")
 
-    render_pair(ax_orig, ax_seg, esri_img, pixels, ok, bldg_rings, vessel_rings, infra,
+    render_pair(ax_orig, ax_seg, esri_img, pixels, ok,
                 min_lat, max_lat, min_lon, max_lon, stratum_name)
 
     fig.suptitle(f"{stratum_name}  ·  {lat:.5f}, {lon:.5f}  ·  512 m bbox",

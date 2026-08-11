@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Heat/Cool Demand — Validation Sources</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 32px 24px;
+  }
+  h1 { font-size: 22px; color: #f8fafc; margin-bottom: 6px; }
+  .subtitle { color: #64748b; font-size: 13px; margin-bottom: 28px; font-family: monospace; }
+  h2 {
+    font-size: 17px; color: #f8fafc; margin: 40px 0 6px;
+    padding-bottom: 8px; border-bottom: 1px solid #334155;
+  }
+  h2 .badge { font-size: 11px; font-family: monospace; color: #7F77DD; margin-left: 8px; }
+  h3 { font-size: 14px; color: #cbd5e1; margin: 22px 0 8px; }
+  p { margin-bottom: 12px; max-width: 900px; }
+  a { color: #7dd3fc; }
+  code { font-family: monospace; background: #1e293b; padding: 1px 5px; border-radius: 3px; color: #fbbf24; }
+
+  .callout {
+    background: #1e293b; border: 1px solid #334155; border-left: 3px solid #7F77DD;
+    border-radius: 6px; padding: 12px 16px; margin: 14px 0; max-width: 900px;
+  }
+  .callout.warn { border-left-color: #f59e0b; }
+  .callout.bad  { border-left-color: #ef4444; }
+  .callout.good { border-left-color: #22c55e; }
+  .callout b { color: #f8fafc; }
+
+  .r2box { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0 24px; }
+  .r2card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 18px; min-width: 190px; }
+  .r2card .label { font-size: 11px; font-family: monospace; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; }
+  .r2card .val { font-size: 22px; font-weight: bold; color: #f8fafc; margin-top: 4px; }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 26px; font-size: 12.5px; }
+  th, td { padding: 7px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid #1e293b; }
+  th {
+    background: #1a2540; color: #94a3b8; font-family: monospace; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  td.num { text-align: right; font-family: monospace; white-space: nowrap; }
+  td.src { max-width: 460px; color: #94a3b8; font-size: 12px; }
+  tr:hover td { background: #16213a; }
+
+  .tier {
+    font-family: monospace; font-size: 10.5px; padding: 2px 7px; border-radius: 4px;
+    white-space: nowrap; display: inline-block;
+  }
+  .tier-verified { background: #052e1c; color: #4ade80; border: 1px solid #14532d; }
+  .tier-pool     { background: #1c1917; color: #a8a29e; border: 1px solid #44403c; }
+  .tier-fresh    { background: #0c2a4a; color: #7dd3fc; border: 1px solid #1e4a72; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0 18px; font-size: 12.5px; color: #94a3b8; }
+  .tablewrap { overflow-x: auto; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #1e293b; color: #64748b; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Heat / Cool Demand — Final Sources</h1>
+<div class="subtitle">companion to notebooks/heat_demand_sandbox.ipynb &amp; notebooks/cooling_demand_sandbox.ipynb — rewritten 2026-08-08</div>
+
+<div class="callout good">
+<b>This page documents only what the two currently-deployed formulas are actually built on and
+checked against — no rejected or superseded material.</b> Both notebooks went through many
+tried-and-abandoned formulas over the course of this work (Eurostat-only, US-EIA-only, various
+pooled compromises, a China provincial dataset that gave a real but too-weak signal, a declined
+bulk AC-electricity dataset, and more). None of that is repeated here. The full exploration
+history, including everything that was tried and rejected and why, lives in
+<code>docs/demand_work_summary_2026-07-31.md</code> — read that if you want the "why not X"
+reasoning; read this page if you just want to know what the final numbers are actually built on.
+</div>
+
+<h2>Currently deployed formulas</h2>
+<div class="callout">
+  <code>HEAT = floor_area &times; 0.252041 &times; HDD18<sup>0.7482</sup></code> (kWh/m&sup2;&middot;yr) — R&sup2;=0.613 on its 426-point fitting panel<br>
+  <code>COOL = floor_area &times; 0.00027974 &times; CDD24<sup>1.7467</sup></code> (kWh/m&sup2;&middot;yr) — R&sup2;=0.777 on its 13-point fitting panel
+</div>
+
+<h2>Heat — 426-point calibration panel <span class="badge">4 continents, no source over ~33%</span></h2>
+
+<div class="r2box">
+  <div class="r2card"><div class="label">n (fitting panel)</div><div class="val">426</div></div>
+  <div class="r2card"><div class="label">R&sup2; (fitting panel)</div><div class="val">0.613</div></div>
+  <div class="r2card"><div class="label">Countries / regions</div><div class="val" style="font-size:15px;">4 continents</div></div>
+</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>Source</th><th>n</th><th>Share</th><th>What it is</th></tr>
+<tr>
+  <td><b>Eurostat</b></td><td class="num">141</td><td class="num">33%</td>
+  <td class="src"><code>nrg_chdd_a</code> (heating degree days, base 18&deg;C) &times; <code>nrg_d_hhq</code>
+  filtered to <code>FC_OTH_HH_E_SH</code> (space heating specifically) &times; <code>demo_pjan</code>
+  (population) — real EU/EEA country-year data, fetched live via the Eurostat REST API. Subsampled
+  from a real 335-point (Luxembourg excluded) panel to balance against the other three sources.</td>
+</tr>
+<tr>
+  <td><b>Japan Energy Database</b></td><td class="num">141</td><td class="num">33%</td>
+  <td class="src">Ono et al. 2025, <i>Scientific Data</i>, Zenodo <a href="https://doi.org/10.5281/zenodo.17746690">10.5281/zenodo.17746690</a> —
+  real municipality-level end-use energy (1,741 municipalities &times; 2013/2016/2019), aggregated to
+  Japan's 47 real prefectures. Real HDD18 fetched live via GEE/ERA5-Land per prefecture; real 2025
+  population used as a stable per-capita proxy.</td>
+</tr>
+<tr>
+  <td><b>US EIA SEDS</b></td><td class="num">141</td><td class="num">33%</td>
+  <td class="src"><code>ZWHDP</code> (heating degree days) &times; <code>NGRCB</code> (residential natural
+  gas, the dominant US heating fuel) &times; <code>TPOPP</code> (population) — real US state-year
+  administrative data, <code>api.eia.gov</code>. Subsampled from a real 878-point panel (ME/NH/VT
+  excluded — documented real fuel-mix confound, oil/electric heat despite high HDD).</td>
+</tr>
+<tr>
+  <td><b>Chile</b></td><td class="num">3</td><td class="num">0.7%</td>
+  <td class="src">Ministerio de Energ&iacute;a / Corporaci&oacute;n de Desarrollo Tecnol&oacute;gico,
+  <i>"Informe final usos de energ&iacute;a Chile 2018"</i> — real government-commissioned 3,500-household
+  survey, grouped by official OGUC thermal zone (B/C/D), converted per-capita via real ~2.9
+  persons/household.</td>
+</tr>
+</table>
+</div>
+
+<p style="font-size:12.5px; color:#94a3b8;">
+Individually checked (each source's own real data against the one formula fit on all 426 points):
+Europe R&sup2;=0.38, Japan R&sup2;=0.26, US R&sup2;=0.59, Chile R&sup2;=0.76 — no catastrophic failures.
+</p>
+
+<h2>Heat — 15-city independent check <span class="badge">real vs. predicted, current formula only</span></h2>
+<p>
+15 real, named cities — not part of the 426-point country-level fitting panel above, so this is an
+independent city-level sanity check on the deployed formula. Deliberately spans 5 regions: Europe,
+Russia/Eastern Europe, North America, East Asia, Central Asia. <b>R&sup2; = 0.684.</b>
+</p>
+<div class="legend">
+  <span><span class="tier tier-pool">&nbsp;</span> original pool citation (EU ODYSSEE / US / Canada NRCan / Russia FSU / China, not individually re-verified)</span>
+</div>
+<div class="tablewrap">
+<table>
+<tr><th>City</th><th>Country</th><th>HDD18</th><th>Real (kWh/m&sup2;)</th><th>Predicted</th><th>Err</th><th>Tier</th></tr>
+<tr><td>Miami</td><td>US</td><td class="num">14</td><td class="num">10.0</td><td class="num">1.8</td><td class="num">-82%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Tokyo</td><td>Japan</td><td class="num">1671</td><td class="num">45.0</td><td class="num">65.0</td><td class="num">+44%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Madrid</td><td>Spain</td><td class="num">1704</td><td class="num">55.0</td><td class="num">66.0</td><td class="num">+20%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Paris</td><td>France</td><td class="num">2139</td><td class="num">95.0</td><td class="num">78.2</td><td class="num">-18%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Berlin</td><td>Germany</td><td class="num">2696</td><td class="num">105.0</td><td class="num">93.0</td><td class="num">-11%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Seoul</td><td>South Korea</td><td class="num">2769</td><td class="num">90.0</td><td class="num">94.8</td><td class="num">+5%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Beijing</td><td>China</td><td class="num">2780</td><td class="num">85.0</td><td class="num">95.1</td><td class="num">+12%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Chicago</td><td>US</td><td class="num">2949</td><td class="num">110.0</td><td class="num">99.4</td><td class="num">-10%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Kyiv</td><td>Ukraine</td><td class="num">3053</td><td class="num">160.0</td><td class="num">102.0</td><td class="num">-36%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Toronto</td><td>Canada</td><td class="num">3191</td><td class="num">130.0</td><td class="num">105.5</td><td class="num">-19%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Denver</td><td>US</td><td class="num">3658</td><td class="num">85.0</td><td class="num">116.8</td><td class="num">+37%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Almaty</td><td>Kazakhstan</td><td class="num">3875</td><td class="num">150.0</td><td class="num">122.0</td><td class="num">-19%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Stockholm</td><td>Sweden</td><td class="num">3916</td><td class="num">110.0</td><td class="num">122.9</td><td class="num">+12%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Moscow</td><td>Russia</td><td class="num">4365</td><td class="num">180.0</td><td class="num">133.3</td><td class="num">-26%</td><td><span class="tier tier-pool">pool</span></td></tr>
+<tr><td>Reykjavik</td><td>Iceland</td><td class="num">5157</td><td class="num">150.0</td><td class="num">151.0</td><td class="num">+1%</td><td><span class="tier tier-pool">pool</span></td></tr>
+</table>
+</div>
+
+<h2>Cool — 13-point calibration panel <span class="badge">6 countries, zero Europe</span></h2>
+
+<div class="r2box">
+  <div class="r2card"><div class="label">n (fitting panel)</div><div class="val">13</div></div>
+  <div class="r2card"><div class="label">R&sup2; (fitting panel)</div><div class="val">0.777</div></div>
+  <div class="r2card"><div class="label">Countries</div><div class="val" style="font-size:15px;">6</div></div>
+</div>
+
+<div class="legend">
+  <span><span class="tier tier-verified">&nbsp;</span> verified, named source</span>
+  <span><span class="tier tier-pool">&nbsp;</span> original pool citation, not individually re-verified</span>
+  <span><span class="tier tier-fresh">&nbsp;</span> CDD re-fetched live via GEE this session (2026-08-08)</span>
+</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>City</th><th>Country</th><th>CDD24</th><th>Real (kWh/m&sup2;)</th><th>Tier</th><th>Source</th></tr>
+<tr>
+  <td>Chicago</td><td>US</td><td class="num">23</td><td class="num">15.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Original pool citation — Tang 2025 China-provincial study / US RECS / Gulf estimates, not individually re-verified.</td>
+</tr>
+<tr>
+  <td>Chongqing</td><td>China</td><td class="num">300</td><td class="num">2.8</td>
+  <td><span class="tier tier-verified">verified</span></td>
+  <td class="src">&ldquo;Analysis on urban residential energy consumption of Hot Summer &amp; Cold Winter Zone in China&rdquo; (ScienceDirect) — on-site metered AC electricity.</td>
+</tr>
+<tr>
+  <td>Changsha</td><td>China</td><td class="num">320</td><td class="num">3.4</td>
+  <td><span class="tier tier-verified">verified</span></td>
+  <td class="src">Same paper as Chongqing — metered AC electricity.</td>
+</tr>
+<tr>
+  <td>Shanghai</td><td>China</td><td class="num">337</td><td class="num">20.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Original pool citation — Tang 2025 China-provincial study (PDF's per-province numeric labels could not be independently confirmed this session; genuine on-topic source, exact chart value unverified).</td>
+</tr>
+<tr>
+  <td>Guangzhou</td><td>China</td><td class="num">652</td><td class="num">45.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Same Tang 2025 caveat as Shanghai.</td>
+</tr>
+<tr>
+  <td>Miami</td><td>US</td><td class="num">711</td><td class="num">45.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Original pool citation — Tang 2025 / US RECS / Gulf estimates, not individually re-verified.</td>
+</tr>
+<tr>
+  <td>Houston</td><td>US</td><td class="num">778</td><td class="num">45.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Same as Miami.</td>
+</tr>
+<tr>
+  <td>Delhi</td><td>India</td><td class="num">1000</td><td class="num">30.0</td>
+  <td><span class="tier tier-verified">verified</span></td>
+  <td class="src">GBPN, &ldquo;Residential Buildings in India: Energy Use Projections&rdquo; — national avg. AC Energy Performance Index &asymp;30 kWh/m&sup2;/yr (range 10&ndash;40, midpoint used). PDF returned HTTP 403 on direct fetch; number taken from the search index's quoted text.</td>
+</tr>
+<tr>
+  <td>Phoenix</td><td>US</td><td class="num">1427</td><td class="num">60.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Original pool citation — Tang 2025 / US RECS / Gulf estimates, not individually re-verified.</td>
+</tr>
+<tr>
+  <td>Riyadh</td><td>Saudi Arabia</td><td class="num">1891</td><td class="num">100.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Same as Phoenix.</td>
+</tr>
+<tr>
+  <td>Abu Dhabi</td><td>UAE</td><td class="num">1938.78</td><td class="num">244.0</td>
+  <td><span class="tier tier-fresh">fresh</span></td>
+  <td class="src">Real 15-villa residential EUI audit (349.1 kWh/m&sup2; total) &times; real 70% GCC-wide AC-consumption-share = &asymp;244 kWh/m&sup2; AC-specific. CDD24 re-fetched live via GEE (ERA5-Land, 15km area-average) 2026-08-08.</td>
+</tr>
+<tr>
+  <td>Dubai</td><td>UAE</td><td class="num">1978</td><td class="num">130.0</td>
+  <td><span class="tier tier-pool">pool</span></td>
+  <td class="src">Original pool citation, not individually re-verified.</td>
+</tr>
+<tr>
+  <td>Kuwait City</td><td>Kuwait</td><td class="num">2022.96</td><td class="num">168.0</td>
+  <td><span class="tier tier-verified">verified</span></td>
+  <td class="src">Real government/academic AC-share (&asymp;67%) applied to the real GCC regional residential EUI trend (&asymp;198&ndash;306 kWh/m&sup2;), midpoint-derived AC-specific intensity. CDD24 fetched live via GEE, ERA5-Land, 15km area-average.</td>
+</tr>
+</table>
+</div>
+
+<h2>Methodology notes</h2>
+<p>
+<b>HDD/CDD basis.</b> All degree-day figures use the same convention as the rest of this pipeline:
+HDD base 18&deg;C, CDD base 24&deg;C, annual totals, matching <code>climate_extractor.py</code>'s
+ERA5-Land methodology.
+</p>
+<p>
+<b>Why the fitting panels don't overlap with the independent checks.</b> The heat formula's 426-point
+fitting panel is country/prefecture/state-level (Eurostat, Japan, US, Chile); the 15-city check is
+city-level and deliberately not part of that fit, so it's a genuine independent check rather than a
+re-statement of the training data. The cool formula's 13-point panel is city-level and <i>is</i> the
+fitting data — there is currently no separate independent check for cooling beyond the fit itself.
+</p>
+<p>
+<b>Full history.</b> Every rejected or superseded source and formula (Eurostat-only, US-EIA-only,
+pooled-with-Europe cooling variants, the declined Falchetta et al. 2023 AC-electricity dataset, the
+China provincial signal that was real but too weak, Korea KESIS, the 150-country World Bank check,
+and more) is documented in full in <code>docs/demand_work_summary_2026-07-31.md</code> — intentionally
+not repeated on this page, which exists to answer "what is the final formula actually built on,"
+not "what was tried along the way."
+</p>
+
+<footer>
+Companion to <code>notebooks/heat_demand_sandbox.ipynb</code> and <code>notebooks/cooling_demand_sandbox.ipynb</code>.
+Rewritten 2026-08-08 to reflect only the currently deployed formulas — the previous version of this
+page described formulas superseded days earlier and is no longer accurate; see
+<code>docs/demand_work_summary_2026-07-31.md</code> for the full derivation history.
+</footer>
+
+</body>
+</html>

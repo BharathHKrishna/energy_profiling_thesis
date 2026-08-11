@@ -100,9 +100,14 @@ def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
         if data.size == 0:
             return None
 
-        # Remove nodata values — never return nodata sentinels
+        # Remove nodata and invalid values per layer:
+        #   building_height: exclude 0 (cell has no buildings) — averaging zeros
+        #                    across mostly-empty cells drags the mean to 1-2m
+        #   built_surface, population: 0 is valid (genuinely nothing there)
+        GHSL_MIN = {"built_surface": 0.0, "building_height": 0.01, "population": 0.0}
         nodata_val = GHSL_NODATA.get(layer_name, -200.0)
-        valid_mask = (data != nodata_val) & (data > -100)  # extra safety guard
+        min_val    = GHSL_MIN.get(layer_name, 0.0)
+        valid_mask = (data != nodata_val) & (data >= min_val)
         valid_pixels = data[valid_mask]
 
         if len(valid_pixels) == 0:

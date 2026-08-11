@@ -9,16 +9,17 @@ from scripts.utils.logger import get_logger
 from scripts.extractors.worldcover_extractor import (
     extract_worldcover_features, strip_internal_features
 )
-from scripts.extractors.ghsl_extractor import extract_ghsl_features
+from scripts.extractors.ghsl_extractor       import extract_ghsl_features
 from scripts.extractors.solar_atlas_extractor import extract_solar_features
-from scripts.extractors.viirs_extractor import extract_viirs_features
-from scripts.extractors.osm_extractor import extract_osm_features
+from scripts.extractors.wind_atlas_extractor  import extract_wind_features
+from scripts.extractors.osm_extractor         import extract_osm_features
+from scripts.extractors.viirs_extractor       import extract_viirs_features
+from scripts.extractors.climate_extractor      import extract_climate_features
+from scripts.extractors.demand_extractor       import demand_from_features
+from scripts.extractors.demand_score           import demand_score_for_coord
 
 logger = get_logger("feature_extractor")
 
-# All 11 ESA WorldCover classes — always exploded as individual columns.
-# If ESA succeeds but a class has 0 pixels, its pct = 0.0 (true value, not missing).
-# If ESA fails entirely, all wc_* columns are absent.
 _WC_CLASSES = [
     "water", "built_up", "tree_cover", "cropland", "bare_sparse",
     "shrubland", "grassland", "wetland", "mangrove", "moss_lichen", "snow_ice"
@@ -30,58 +31,70 @@ def _bbox(lat, lon, size_m=512):
     dlat = half / 111320
     dlon = half / (111320 * math.cos(math.radians(abs(lat) or 0.001)))
     return lat - dlat, lat + dlat, lon - dlon, lon + dlon
-    # returns: min_lat, max_lat, min_lon, max_lon
 
 
-def _process_worldcover(lat, lon, min_lat, max_lat, min_lon, max_lon, result, stratum_name):
-    try:
-        wc = extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
-        wc = strip_internal_features(wc)
+def _apply_worldcover(wc_raw, result, label=""):
+    """Parse and merge a raw WorldCover result dict into result."""
+    wc = strip_internal_features(wc_raw)
+    if not wc:
+        logger.warning(f"[{label}] ESA: no data")
+        return
 
-        if not wc:
-            logger.warning(f"[{stratum_name}] ESA: no data returned")
-            return
+    classes_raw = wc.pop("wc_classes_json", None)
+    if classes_raw:
+        classes = json.loads(classes_raw)
+        for cls in _WC_CLASSES:
+            result[f"wc_{cls}_pct"] = classes.get(cls, {}).get("pct", 0.0)
+    else:
+        for cls in _WC_CLASSES:
+            result[f"wc_{cls}_pct"] = 0.0
 
-        # Explode wc_classes_json into 11 individual per-class % columns
-        classes_raw = wc.pop("wc_classes_json", None)
-        if classes_raw:
-            classes = json.loads(classes_raw)
-            for cls in _WC_CLASSES:
-                result[f"wc_{cls}_pct"] = classes.get(cls, {}).get("pct", 0.0)
-        else:
-            # ESA succeeded but no class JSON — still add 0.0 for all classes
-            for cls in _WC_CLASSES:
-                result[f"wc_{cls}_pct"] = 0.0
+    if "wc_std" in wc:
+        wc["wc_energy_score_std"] = wc.pop("wc_std")
 
-        # Rename wc_std → wc_energy_score_std
-        if "wc_std" in wc:
-            wc["wc_energy_score_std"] = wc.pop("wc_std")
-
-        result.update(wc)
-        logger.info(f"[{stratum_name}] ESA: {len(wc) + len(_WC_CLASSES)} features")
-
-    except Exception as e:
-        logger.warning(f"[{stratum_name}] ESA WorldCover failed: {e}")
+    result.update(wc)
+    logger.info(f"[{label}] ESA: {len(wc) + len(_WC_CLASSES)} features")
 
 
-def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type="") -> dict:
+def merge_all_features(lat, lon, bbox_size_m, wc_raw, ghsl, solar, wind, osm) -> dict:
     """
-    Extract all PORE features for a single BORE-verified coordinate.
+    Merge pre-fetched extractor results into a single flat feature dict.
 
-    Returns a flat dict with:
-      - 6 metadata columns
-      - 18 ESA WorldCover features (11 per-class %, 7 summary)
-      - 3 GHSL features
-      - 2 Solar Atlas features
-      - 3 VIIRS features
-      - 13 OSM features
-    Sources: OSM, ESA WorldCover, VIIRS, GHSL, Global Solar Atlas.
+    Called by the web app after running all extractors in parallel.
+    Each argument may be an empty dict if its extractor failed — the null
+    contract (absent key = no data) is preserved throughout.
+    """
+    result = {
+        "lat":         lat,
+        "lon":         lon,
+        "bbox_size_m": bbox_size_m,
+    }
 
+    if wc_raw:
+        _apply_worldcover(wc_raw, result, label=f"{lat:.4f},{lon:.4f}")
+
+    for data, source in [(ghsl, "GHSL"), (solar, "Solar"), (wind, "Wind")]:
+        if data:
+            result.update(data)
+            logger.info(f"Merged {source}: {len(data)} features")
+
+    if osm:
+        osm_clean = {k: v for k, v in osm.items() if k not in ("lat", "lon")}
+        result.update(osm_clean)
+        logger.info(f"Merged OSM: {osm.get('raw_element_count', 0)} elements")
+
+    return result
+
+
+def extract_all_features(lat, lon, stratum_name="", importance_tier="",
+                         strata_type="", bbox_size_m=512) -> dict:
+    """
+    Sequential extraction pipeline for one coordinate (used by BORE/PORE batch runs).
+
+    Sources: ESA WorldCover, GHSL, Global Solar Atlas, Global Wind Atlas, OSM Overpass.
     Null contract: absent key = no data. Never returns sentinel values.
-    If an extractor fails, its keys are simply absent from the result.
-    Exception: osm_building_count=0 is kept (0 buildings is valid information).
     """
-    min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon)
+    min_lat, max_lat, min_lon, max_lon = _bbox(lat, lon, bbox_size_m)
 
     result = {
         "stratum_name":    stratum_name,
@@ -89,13 +102,17 @@ def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type
         "strata_type":     strata_type,
         "lat":             lat,
         "lon":             lon,
-        "bbox_size_m":     512,
+        "bbox_size_m":     bbox_size_m,
     }
 
-    # ── 1. ESA WorldCover ────────────────────────────────────────────────────
-    _process_worldcover(lat, lon, min_lat, max_lat, min_lon, max_lon, result, stratum_name)
+    # 1. ESA WorldCover
+    try:
+        wc = extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
+        _apply_worldcover(wc, result, label=stratum_name)
+    except Exception as e:
+        logger.warning(f"[{stratum_name}] ESA WorldCover failed: {e}")
 
-    # ── 2. GHSL ──────────────────────────────────────────────────────────────
+    # 2. GHSL
     try:
         ghsl = extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
         result.update(ghsl)
@@ -103,7 +120,7 @@ def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type
     except Exception as e:
         logger.warning(f"[{stratum_name}] GHSL failed: {e}")
 
-    # ── 3. Global Solar Atlas ────────────────────────────────────────────────
+    # 3. Global Solar Atlas
     try:
         solar = extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
         result.update(solar)
@@ -111,7 +128,15 @@ def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type
     except Exception as e:
         logger.warning(f"[{stratum_name}] Solar Atlas failed: {e}")
 
-    # ── 4. VIIRS / MODIS via GEE ─────────────────────────────────────────────
+    # 4. Global Wind Atlas
+    try:
+        wind = extract_wind_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
+        result.update(wind)
+        logger.info(f"[{stratum_name}] Wind: {len(wind)} features")
+    except Exception as e:
+        logger.warning(f"[{stratum_name}] Wind Atlas failed: {e}")
+
+    # 5. VIIRS Nighttime Lights (GEE)
     try:
         viirs = extract_viirs_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
         result.update(viirs)
@@ -119,16 +144,65 @@ def extract_all_features(lat, lon, stratum_name, importance_tier="", strata_type
     except Exception as e:
         logger.warning(f"[{stratum_name}] VIIRS failed: {e}")
 
-    # ── 5. OSM Overpass ───────────────────────────────────────────────────────
+    # 6. Climate — HDD/CDD from ERA5-Land (GEE)
+    try:
+        climate = extract_climate_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
+        result.update(climate)
+        logger.info(f"[{stratum_name}] Climate: {len(climate)} features")
+    except Exception as e:
+        logger.warning(f"[{stratum_name}] Climate failed: {e}")
+
+    # 6b. Heating/cooling demand — derived from GHSL + climate values already in `result`
+    # above, no extra GHSL read or GEE call (see demand_extractor.py docstring for the
+    # Eurostat-fit formula and its known limitations — no DHW term, cooling is metered-use
+    # not pure need).
+    try:
+        demand = demand_from_features(
+            result.get("ghsl_built_surface_m2"),
+            result.get("ghsl_building_height_m"),
+            result.get("climate_hdd"),
+            result.get("climate_cdd24"),
+            result.get("climate_mean_temp_c"),
+        )
+        result.update(demand)
+        if demand:
+            logger.info(
+                f"[{stratum_name}] Demand: heating={demand.get('heating_MWh')} MWh, "
+                f"cooling={demand.get('cooling_MWh')} MWh"
+            )
+    except Exception as e:
+        logger.warning(f"[{stratum_name}] Demand calc failed: {e}")
+
+    # 7. OSM Overpass
     try:
         osm = extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon)
-        # OSM prepends lat, lon — they duplicate metadata, update order is harmless
         result.update(osm)
-        logger.info(f"[{stratum_name}] OSM: {osm.get('raw_element_count', 0)} elements")
+        logger.info(f"[{stratum_name}] OSM: {osm.get('raw_element_count', 0)} elements")  # noqa
     except Exception as e:
         logger.warning(f"[{stratum_name}] OSM failed: {e}")
 
-    feature_count = len(result) - 6  # subtract metadata keys
-    logger.info(f"[{stratum_name}] ({lat:.4f}, {lon:.4f}) — {feature_count} feature keys populated")
+    # 7b. Energy-demand score — synthetic 0-100 tier, single-cell (see demand_score.py
+    # docstring: not the notebook's validated 9-cell mean). Reuses built/height/VIIRS
+    # from `result` above, but does its own separate local OSM-gate read
+    # (extract_osm_use, distinct from step 7's extract_osm_features).
+    try:
+        score = demand_score_for_coord(
+            lat, lon,
+            result.get("ghsl_built_surface_m2"),
+            result.get("ghsl_building_height_m"),
+            result.get("viirs_ntl_nw_cm2_sr"),
+        )
+        result.update(score)
+        if score:
+            logger.info(
+                f"[{stratum_name}] Demand score: {score.get('demand_score')} "
+                f"({score.get('demand_tier')})"
+            )
+    except Exception as e:
+        logger.warning(f"[{stratum_name}] Demand score failed: {e}")
 
+    logger.info(
+        f"[{stratum_name}] ({lat:.4f}, {lon:.4f}) — "
+        f"{len(result) - 6} feature keys populated"
+    )
     return result
