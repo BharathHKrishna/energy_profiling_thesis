@@ -107,7 +107,7 @@ ALL_COORDS = [
     ("Industrial",                      51.458202,  21.982493),
     ("Data Centre + Industrial",        50.119929,   8.735434),
     ("Industrial + Arid",               23.545953,  53.311264),
-    ("Agrivoltaics (Solar + Farmland)", 51.398581,  12.078941),
+    ("Agriculture / Agrivoltaics", 51.398581,  12.078941),
     ("Industrial + Forest",             58.164353,  54.986046),
     ("Hydropower Reservoir",           -26.893351, -49.060331),
     ("Agricultural + Water",            34.265156, 119.997053),

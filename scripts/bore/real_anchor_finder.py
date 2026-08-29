@@ -109,7 +109,7 @@ N_PER_STRATUM: dict[str, int] = {
     "Industrial":                      250000,
     "Data Centre + Industrial":        250000,
     "Industrial + Arid":               250000,
-    "Agrivoltaics (Solar + Farmland)": 250000,
+    "Agriculture / Agrivoltaics": 250000,
     "Industrial + Forest":             250000,
     "Hydropower Reservoir":            250000,
     "Agricultural + Water":            250000,
@@ -319,7 +319,7 @@ OSM_QUERIES: dict[str, str] = {
     # (solar+broadacre grain) — both genuinely dry cropland, deliberately NOT another
     # rice-paddy/aquaculture-adjacent region (that's exactly the Anhui/Jiangsu fish-pond
     # confusion this stratum already had to remove once).
-    "Agrivoltaics (Solar + Farmland)": """
+    "Agriculture / Agrivoltaics": """
         [out:json][timeout:60];
         (way[power=generator]["generator:source"=solar](22,71,26,75);
          way[power=generator]["generator:source"=solar](28,68,32,74);
@@ -796,7 +796,7 @@ DENSIFY_STRATA = {
     # or an oil/mining facility is a real contiguous zone (like Industrial), not a single
     # structural point (like a dam wall or a coastline). Same gate, same correctness
     # guarantee as every other densified stratum — this only changes what gets proposed.
-    "Agrivoltaics (Solar + Farmland)",
+    "Agriculture / Agrivoltaics",
     # Added later same day: same reasoning extended to 4 more real zone-type strata.
     # A sawmill complex, an oil/mining facility, a peri-urban allotment ring, and an
     # informal settlement are all contiguous areas, not single points — same gate, same

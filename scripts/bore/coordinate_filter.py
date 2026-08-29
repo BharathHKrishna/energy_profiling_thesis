@@ -210,7 +210,7 @@ def build_strata_config(esa: dict[str, int]) -> list[dict]:
         # cropland ≥ 25% (actual farmland clearly present) + built_up ≥ 15% (solar panels).
         # Raised cropland from 20%→25%: 20% admitted fish-pond floating-solar where "cropland"
         # was miscoded adjacent paddy — 25% ensures genuine farmland is prominent in frame.
-        u("Agrivoltaics (Solar + Farmland)",
+        u("Agriculture / Agrivoltaics",
           cr, 25, bu, 15,
           tier_key="MID"),
 

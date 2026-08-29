@@ -15,6 +15,7 @@ Null contract: absent key = no data. ERA5-Land has no ocean coverage, so
 coords over open water return None for all climate features — acceptable,
 as there is no building heating/cooling demand on water.
 """
+import time
 import sys
 import os
 
@@ -74,26 +75,42 @@ def _is_valid(value, feature_name):
 
 
 def _reduce_region(image, min_lat, max_lat, min_lon, max_lon, band_name):
-    """Mean-reduce a single-band GEE image over the bbox. Returns float or None."""
+    """Mean-reduce a single-band GEE image over the bbox. Returns float or None.
+
+    Retries transient GEE errors (rate limit, timeout, connection reset) with
+    backoff -- found live that occasional GEE calls take 30-95s or fail
+    outright under sustained pipeline load with zero underlying data problem,
+    a real, retriable latency/availability issue distinct from a genuine
+    missing-data case (which still correctly returns None after retries)."""
     if not GEE_AVAILABLE:
         return None
-    try:
-        region = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
-        result = (
-            image.select(band_name)
-            .reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=region,
-                scale=ERA5_SCALE_M,
-                maxPixels=1e6,
+    last_err = None
+    for attempt in range(4):
+        try:
+            region = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
+            result = (
+                image.select(band_name)
+                .reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=region,
+                    scale=ERA5_SCALE_M,
+                    maxPixels=1e6,
+                )
+                .getInfo()
             )
-            .getInfo()
-        )
-        value = result.get(band_name)
-        return None if value is None else float(value)
-    except Exception as e:
-        logger.warning(f"ERA5 bbox reduce failed for {band_name}: {e}")
-        return None
+            value = result.get(band_name)
+            return None if value is None else float(value)
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            transient = any(s in msg for s in ("429", "too many", "timeout", "timed out",
+                                               "503", "502", "rate", "connection"))
+            if attempt < 3 and transient:
+                time.sleep(2 * (2 ** attempt))  # 2s, 4s, 8s
+                continue
+            break
+    logger.warning(f"ERA5 bbox reduce failed for {band_name} after retries: {last_err}")
+    return None
 
 
 def extract_climate_features(lat, lon, min_lat, max_lat, min_lon, max_lon):

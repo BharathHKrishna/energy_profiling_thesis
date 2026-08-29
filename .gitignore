@@ -39,3 +39,21 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
+
+# Reference papers (260MB, download/keep locally, not in git) — the survey writeup
+# itself is small real content and stays tracked
+docs/Thesis_usables/*
+!docs/Thesis_usables/papers_survey_full_report.md
+
+# Bulk data files that ended up in docs/ instead of data/ (same reasoning as data/ above)
+docs/cool_demand.csv
+docs/heat_demand.csv
+docs/cities.xlsx
+docs/cities_512m_floor_climate.xlsx
+
+# Dev-facing HTML docs and the thesis itself stay local, not pushed to GitHub
+*.html
+thesis/
+
+# Notebooks — large embedded outputs, not meant for the code repo
+notebooks/

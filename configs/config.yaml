@@ -25,14 +25,25 @@ rasters:
   natural_earth:
     ocean: rasters/natural_earth/ne_10m_ocean.shp
 
+# logging.log_file removed 2026-08-27 — it pointed at logs/pipeline.log, a
+# RotatingFileHandler that was never process-safe across run_pipeline.py's 16
+# worker processes (real FileNotFoundError race on rotation, found live in the
+# 10k run) and, confirmed by grep, was never read back by any code anyway.
+# logger.py is console-only now; each run's own `> logs/run_10k_*.log` shell
+# redirect is the actual log.
 logging:
   level: INFO
-  log_file: logs/pipeline.log
 
 # Note: the overpass_* keys that used to live here were also dead — BORE's live
 # Overpass calls (real_anchor_finder.py) use their own hardcoded mirror list
-# (_OVERPASS_MIRRORS) with its own rate-limiting, not this config. PORE's OSM reads
-# are fully offline now (osm_extractor.py) and don't touch Overpass at all.
+# (_OVERPASS_MIRRORS) with its own rate-limiting, not this config. PORE's OSM
+# reads now also go through live Overpass (osm_overpass_extract.py), fetched
+# inline per-coordinate inside `stream` rather than a separate offline stage.
+# kit_model below is likewise not actually read by any code — kit_caption.py's
+# DEFAULT_MODEL constant (overridable via the KIT_MODEL env var) is the real
+# source of truth. Kept here descriptive-only. Groq was used until 2026-08-24
+# (hit its 200,000 tokens/day account cap, ~38 days to caption 10k coordinates),
+# then fully removed 2026-08-27 — this project no longer calls Groq's API at all.
 api:
-  groq_model: "llama-3.3-70b-versatile"
+  kit_model: "kit.gpt-oss-120b"
   gee_project: "energy-thesis"

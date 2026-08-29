@@ -1,5 +1,6 @@
 import sys
 import os
+import math
 sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 
 import numpy as np
@@ -7,7 +8,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import rasterio
-from rasterio.windows import from_bounds as rasterio_from_bounds
+from rasterio.windows import from_bounds as rasterio_from_bounds, Window
 from pyproj import Transformer
 
 from scripts.utils.logger import get_logger
@@ -125,6 +126,122 @@ def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
 
     except Exception as e:
         logger.warning(f"GHSL {layer_name}: read error — {e}")
+        return None
+
+
+# ── Whole-tile, overlap-weighted floor area ────────────────────────────────────
+# Fixed 2026-08-14: the demand formula's own floor_area input needs a real total
+# built-floor-area estimate for the whole bbox, not the mean-of-cells figures
+# above (ghsl_built_surface_m2/ghsl_building_height_m stay mean-based for the
+# general feature record -- see extract_ghsl_features()). An earlier version of
+# the demand formula used mean built-surface x mean height directly, which
+# systematically underestimates any bbox that isn't perfectly uniform, since it
+# throws away the real per-cell correlation between where a tile is built AND
+# how tall it is there. This reads built_surface and building_height together,
+# cell by cell, and sums (not averages) each cell's own contribution, weighted
+# by how much of that 100m cell geometrically overlaps the 512m bbox -- 512/100
+# = 5.12, so the bbox never lines up exactly with the underlying grid, and an
+# edge cell should count only its actual overlapping fraction, not the whole
+# cell nor nothing.
+
+def compute_floor_area(min_lat, max_lat, min_lon, max_lon):
+    """
+    floor_area = sum_i overlap_fraction_i * built_surface_i * max(height_i, 3) / 3
+
+    Built surface is additive across cells (real m^2 of built area in that
+    cell), height is read per cell rather than one shared bbox-wide average (a
+    tall building on a small footprint and a sprawling low-rise development
+    are not blurred into the same number), and a cell with measured built area
+    but a missing or implausibly low height reading is floored at one storey,
+    3 metres, rather than losing its contribution to the total.
+
+    Returns float (m^2) or None if the bbox has no valid built_surface data at
+    all (open water, raster extent miss, etc.) -- never a fabricated zero.
+    """
+    built_path  = GHSL_PATHS.get("built_surface")
+    height_path = GHSL_PATHS.get("building_height")
+    if not built_path or not height_path:
+        return None
+    if not (os.path.exists(built_path) and os.path.exists(height_path)):
+        logger.warning("GHSL floor_area: raster file(s) not found")
+        return None
+
+    try:
+        xs, ys = TRANSFORMER_TO_MOLL.transform(
+            [min_lon, max_lon, min_lon, max_lon],
+            [min_lat, min_lat, max_lat, max_lat]
+        )
+        moll_min_x, moll_max_x = min(xs), max(xs)
+        moll_min_y, moll_max_y = min(ys), max(ys)
+
+        with rasterio.open(built_path) as bsrc, rasterio.open(height_path) as hsrc:
+            raw_window = rasterio_from_bounds(
+                moll_min_x, moll_min_y, moll_max_x, moll_max_y, bsrc.transform
+            )
+            # Expand to the integer pixel range that the fractional window touches
+            # at all, so a cell only partially inside the bbox is still read (its
+            # overlap_fraction, computed below, is what actually discounts it).
+            col_off = math.floor(raw_window.col_off)
+            row_off = math.floor(raw_window.row_off)
+            col_end = math.ceil(raw_window.col_off + raw_window.width)
+            row_end = math.ceil(raw_window.row_off + raw_window.height)
+            window = Window(col_off=col_off, row_off=row_off,
+                            width=col_end - col_off, height=row_end - row_off)
+
+            if (window.width <= 0 or window.height <= 0 or
+                    window.col_off < 0 or window.row_off < 0 or
+                    window.col_off >= bsrc.width or window.row_off >= bsrc.height):
+                logger.warning(f"GHSL floor_area: bbox outside raster extent for window {window}")
+                return None
+
+            built_data  = bsrc.read(1, window=window)
+            height_data = hsrc.read(1, window=window)
+
+        if built_data.size == 0:
+            return None
+
+        # overlap_fraction per cell: intersection of each integer pixel cell
+        # [c, c+1) x [r, r+1) (in window-local coordinates) with the real,
+        # fractional bbox window -- 1.0 for a cell fully inside, 0 for a cell
+        # entirely outside (shouldn't occur given the expand-to-integer step
+        # above, but clamped anyway), a fraction for an edge cell.
+        local_col_off = raw_window.col_off - col_off
+        local_row_off = raw_window.row_off - row_off
+        bbox_c0, bbox_c1 = local_col_off, local_col_off + raw_window.width
+        bbox_r0, bbox_r1 = local_row_off, local_row_off + raw_window.height
+
+        n_rows, n_cols = built_data.shape
+        col_idx = np.arange(n_cols)
+        row_idx = np.arange(n_rows)
+        col_overlap = np.clip(np.minimum(col_idx + 1, bbox_c1) - np.maximum(col_idx, bbox_c0), 0, 1)
+        row_overlap = np.clip(np.minimum(row_idx + 1, bbox_r1) - np.maximum(row_idx, bbox_r0), 0, 1)
+        overlap_fraction = row_overlap[:, None] * col_overlap[None, :]
+
+        built_nodata = GHSL_NODATA.get("built_surface", -200.0)
+        height_nodata = GHSL_NODATA.get("building_height", -200.0)
+        built_valid = (built_data != built_nodata) & (built_data >= 0.0)
+        built_vals = np.where(built_valid, built_data, 0.0)
+
+        # Height: use the real reading where valid, otherwise floor to 3m (one
+        # storey) so a cell with real built area but a missing/implausible
+        # height reading still contributes rather than being dropped entirely.
+        height_valid = (height_data != height_nodata) & (height_data > 0.0)
+        height_vals = np.where(height_valid, height_data, 3.0)
+        height_vals = np.maximum(height_vals, 3.0)
+
+        cell_floor_area = overlap_fraction * built_vals * (height_vals / 3.0)
+        total = float(np.sum(cell_floor_area))
+
+        if not built_valid.any():
+            logger.info("GHSL floor_area: no valid built_surface cells -- returning None")
+            return None
+
+        logger.info(f"GHSL floor_area: {n_rows * n_cols} cells, "
+                   f"{int(built_valid.sum())} with valid built_surface, total = {total:.1f} m^2")
+        return round(total, 1)
+
+    except Exception as e:
+        logger.warning(f"GHSL floor_area: read error -- {e}")
         return None
 
 

@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 sys.path.insert(0, "/srv/THESIS/energy_profiling_thesis")
 
@@ -56,26 +57,36 @@ def _sample_gee_bbox(image, min_lat, max_lat, min_lon, max_lon, band_name, scale
     if not GEE_AVAILABLE:
         return None
 
-    try:
-        region = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
-        result = (
-            image.select(band_name)
-            .reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=region,
-                scale=scale_m,
-                maxPixels=1e6
+    last_err = None
+    for attempt in range(4):
+        try:
+            region = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
+            result = (
+                image.select(band_name)
+                .reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=region,
+                    scale=scale_m,
+                    maxPixels=1e6
+                )
+                .getInfo()
             )
-            .getInfo()
-        )
-        value = result.get(band_name)
-        if value is None:
-            return None
-        return float(value)
+            value = result.get(band_name)
+            if value is None:
+                return None
+            return float(value)
 
-    except Exception as e:
-        logger.warning(f"GEE bbox reduce failed for {band_name}: {e}")
-        return None
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            transient = any(s in msg for s in ("429", "too many", "timeout", "timed out",
+                                               "503", "502", "rate", "connection"))
+            if attempt < 3 and transient:
+                time.sleep(2 * (2 ** attempt))  # 2s, 4s, 8s
+                continue
+            break
+    logger.warning(f"GEE bbox reduce failed for {band_name} after retries: {last_err}")
+    return None
 
 
 def _is_valid(value, feature_name):
