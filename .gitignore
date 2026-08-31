@@ -54,6 +54,7 @@ docs/cities_512m_floor_climate.xlsx
 # Dev-facing HTML docs and the thesis itself stay local, not pushed to GitHub
 *.html
 thesis/
+thesis_overleaf.zip
 
 # Notebooks — large embedded outputs, not meant for the code repo
 notebooks/
