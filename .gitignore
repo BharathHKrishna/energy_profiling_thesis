@@ -58,3 +58,6 @@ thesis_overleaf.zip
 
 # Notebooks — large embedded outputs, not meant for the code repo
 notebooks/
+
+# Method note supplied as a reference document, not part of the codebase
+docs/demand_equations*.pdf
