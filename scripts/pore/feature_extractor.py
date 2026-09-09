@@ -10,7 +10,6 @@ from scripts.extractors.worldcover_extractor import (
     extract_worldcover_features, strip_internal_features
 )
 from scripts.extractors.ghsl_extractor       import extract_ghsl_features, compute_floor_area
-from scripts.extractors.solar_atlas_extractor import extract_solar_features
 from scripts.extractors.osm_extractor         import extract_osm_features
 from scripts.extractors.viirs_extractor       import extract_viirs_features
 from scripts.extractors.climate_extractor      import extract_climate_features
@@ -48,7 +47,7 @@ def _apply_worldcover(wc_raw, result, label=""):
     logger.info(f"[{label}] ESA: {len(wc) + len(_WC_CLASSES)} features")
 
 
-def merge_all_features(lat, lon, bbox_size_m, wc_raw, ghsl, solar, osm) -> dict:
+def merge_all_features(lat, lon, bbox_size_m, wc_raw, ghsl, osm) -> dict:
     """
     Merge pre-fetched extractor results into a single flat feature dict.
 
@@ -68,7 +67,7 @@ def merge_all_features(lat, lon, bbox_size_m, wc_raw, ghsl, solar, osm) -> dict:
     if wc_raw:
         _apply_worldcover(wc_raw, result, label=f"{lat:.4f},{lon:.4f}")
 
-    for data, source in [(ghsl, "GHSL"), (solar, "Solar")]:
+    for data, source in [(ghsl, "GHSL")]:
         if data:
             result.update(data)
             logger.info(f"Merged {source}: {len(data)} features")
@@ -106,8 +105,18 @@ def extract_all_features(lat, lon, stratum_name="", importance_tier="",
     and on floor_area, both already resolved by the time the pool exits, so
     it is computed after the pool, not inside it.
 
-    Sources: ESA WorldCover, GHSL, Global Solar Atlas, OSM (local tile),
-    VIIRS/MODIS (GEE), ERA5-Land climate (GEE).
+    Sources: ESA WorldCover, GHSL, OSM (local tile), VIIRS/MODIS (GEE),
+    ERA5-Land climate (GEE).
+
+    Global Solar Atlas (PVOUT, GHI) was removed 2026-09-09. It was the only
+    source that did not resolve at tile scale: its grid is roughly 1 km, about
+    one pixel per four 512 m tiles, so a solar figure quoted for a tile was a
+    regional value wearing a local label. It was also the only feature that
+    described the sky above the tile rather than the built environment inside
+    it, which is what every remaining feature and the demand model are about.
+    solar_atlas_extractor.py is kept on disk, unwired, as the record of what was
+    tried. ERA5-Land is coarser still (~11 km) but is retained, because
+    degree-days genuinely do not vary across 512 m whereas solar yield does.
 
     Global Wind Atlas / Open-Meteo ERA5 wind (speed + power density at 100m
     hub height) was removed 2026-08-27, after concurrent extraction made
@@ -143,13 +152,12 @@ def extract_all_features(lat, lon, stratum_name="", importance_tier="",
     tasks = {
         "worldcover": lambda: extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
         "ghsl":       lambda: extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
-        "solar":      lambda: extract_solar_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
         "viirs":      lambda: extract_viirs_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
         "climate":    lambda: extract_climate_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
         "osm":        lambda: extract_osm_features(lat, lon, min_lat, max_lat, min_lon, max_lon),
         "floor_area": lambda: compute_floor_area(min_lat, max_lat, min_lon, max_lon),
     }
-    labels = {"worldcover": "ESA WorldCover", "ghsl": "GHSL", "solar": "Solar Atlas",
+    labels = {"worldcover": "ESA WorldCover", "ghsl": "GHSL",
               "viirs": "VIIRS", "climate": "Climate",
               "osm": "OSM", "floor_area": "floor_area"}
 
@@ -168,8 +176,8 @@ def extract_all_features(lat, lon, stratum_name="", importance_tier="",
     if outputs["worldcover"] is not None:
         _apply_worldcover(outputs["worldcover"], result, label=stratum_name)
 
-    # 2-5. GHSL, Solar, VIIRS, Climate -- same update+log pattern each
-    for name, log_label in (("ghsl", "GHSL"), ("solar", "Solar"),
+    # 2-4. GHSL, VIIRS, Climate -- same update+log pattern each
+    for name, log_label in (("ghsl", "GHSL"),
                             ("viirs", "VIIRS"), ("climate", "Climate")):
         if outputs[name] is not None:
             result.update(outputs[name])

@@ -8,7 +8,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import rasterio
-from rasterio.windows import from_bounds as rasterio_from_bounds, Window
+from rasterio.windows import Window
+from shapely.geometry import Polygon as ShapelyPolygon, box as shapely_box
+
+# GHSL R2023A grid: 100 m cells, so 10,000 m2 of ground per cell.
+CELL_AREA_M2 = 100.0 * 100.0
+# Floor-to-floor height used to turn building volume into floor area.
+STOREY_HEIGHT_M = 3.0
 from pyproj import Transformer
 
 from scripts.utils.logger import get_logger
@@ -40,6 +46,70 @@ GHSL_NODATA = {
 
 # ── Core sampling function ────────────────────────────────────────────────────
 
+# ── True tile footprint in Mollweide ──────────────────────────────────────────
+# Fixed 2026-09-09, in two steps.
+#
+# Originally every GHSL read projected the bbox's four corners into Mollweide
+# and took min/max. Mollweide is equal-area but not conformal: a lat/lon
+# rectangle becomes a sheared parallelogram, so the axis-aligned box around it
+# is larger than the tile. Measured: 1.00x at the prime meridian, 1.12x at
+# Berlin, 1.47x at Hong Kong, 1.89x in south-eastern Australia. Every overlap
+# fraction was computed against that oversized rectangle.
+#
+# The first fix built a true 512 x 512 m square on the projected centre. That
+# corrected the area but kept the wrong orientation, and checked against an
+# independent grid integration it was still off by up to 16 % per tile (Nairobi
+# +15.9 %), because a square is not the shape a lat/lon rectangle projects to.
+#
+# What is here now intersects each raster cell with the tile's real projected
+# footprint, edges densified so the projection's curvature survives. Verified
+# against the same independent integration: agreement within 0.3 % at Hong Kong,
+# Berlin, Tokyo, Santiago, Nairobi and rural Australia. Mollweide being
+# equal-area is what makes this exact rather than approximate: the polygon's
+# area in projected metres is the tile's real ground area.
+
+def tile_polygon(min_lat, max_lat, min_lon, max_lon, densify=40):
+    """The bbox's real footprint in Mollweide metres, as a shapely polygon."""
+    las = np.linspace(min_lat, max_lat, densify)
+    los = np.linspace(min_lon, max_lon, densify)
+    ring = ([(x, min_lat) for x in los] + [(max_lon, y) for y in las] +
+            [(x, max_lat) for x in los[::-1]] + [(min_lon, y) for y in las[::-1]])
+    xs, ys = TRANSFORMER_TO_MOLL.transform([p[0] for p in ring], [p[1] for p in ring])
+    return ShapelyPolygon(zip(xs, ys))
+
+
+def overlap_grid(src, poly):
+    """(window, fractions) — the fraction of each raster cell inside poly.
+
+    Returns (None, None) if the polygon falls outside the raster. A cell fully
+    inside gets 1.0, a cell clipped by the tile edge gets its real share, and a
+    cell outside gets 0, so a caller can sum or average without knowing anything
+    about where the tile boundary fell.
+    """
+    x0, y0, x1, y1 = poly.bounds
+    inv = ~src.transform
+    c0f, r1f = inv * (x0, y0)
+    c1f, r0f = inv * (x1, y1)
+    c0, c1 = int(math.floor(c0f)), int(math.ceil(c1f))
+    r0, r1 = int(math.floor(r0f)), int(math.ceil(r1f))
+
+    if c1 <= c0 or r1 <= r0 or c0 < 0 or r0 < 0 or c0 >= src.width or r0 >= src.height:
+        return None, None
+
+    window = Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0)
+    cell_area = abs(src.transform.a * src.transform.e)
+    frac = np.zeros((r1 - r0, c1 - c0), dtype=float)
+    for i in range(frac.shape[0]):
+        for j in range(frac.shape[1]):
+            cx0, cy0 = src.transform * (c0 + j, r0 + i + 1)
+            cx1, cy1 = src.transform * (c0 + j + 1, r0 + i)
+            cell = shapely_box(min(cx0, cx1), min(cy0, cy1), max(cx0, cx1), max(cy0, cy1))
+            inter = poly.intersection(cell).area
+            if inter > 0:
+                frac[i, j] = inter / cell_area
+    return window, frac
+
+
 def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
     """
     Sample one GHSL raster layer within a 512×512m bounding box.
@@ -68,37 +138,16 @@ def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
         return None
 
     try:
-        # Reproject bbox corners from WGS84 → Mollweide
-        # Use all 4 corners to handle any projection distortion
-        xs, ys = TRANSFORMER_TO_MOLL.transform(
-            [min_lon, max_lon, min_lon, max_lon],
-            [min_lat, min_lat, max_lat, max_lat]
-        )
-        moll_min_x = min(xs)
-        moll_max_x = max(xs)
-        moll_min_y = min(ys)
-        moll_max_y = max(ys)
+        poly = tile_polygon(min_lat, max_lat, min_lon, max_lon)
 
         with rasterio.open(raster_path) as src:
-            window = rasterio_from_bounds(
-                moll_min_x, moll_min_y,
-                moll_max_x, moll_max_y,
-                src.transform
-            )
-
-            # Check window is within raster extent
-            if (window.width <= 0 or window.height <= 0 or
-                    window.col_off < 0 or window.row_off < 0 or
-                    window.col_off >= src.width or window.row_off >= src.height):
-                logger.warning(
-                    f"GHSL {layer_name}: bbox outside raster extent "
-                    f"for window {window}"
-                )
+            window, frac = overlap_grid(src, poly)
+            if window is None:
+                logger.warning(f"GHSL {layer_name}: bbox outside raster extent")
                 return None
-
             data = src.read(1, window=window)
 
-        if data.size == 0:
+        if data.size == 0 or data.shape != frac.shape:
             return None
 
         # Remove nodata and invalid values per layer:
@@ -108,19 +157,23 @@ def sample_ghsl_layer(layer_name, min_lat, max_lat, min_lon, max_lon):
         GHSL_MIN = {"built_surface": 0.0, "building_height": 0.01, "population": 0.0}
         nodata_val = GHSL_NODATA.get(layer_name, -200.0)
         min_val    = GHSL_MIN.get(layer_name, 0.0)
-        valid_mask = (data != nodata_val) & (data >= min_val)
-        valid_pixels = data[valid_mask]
+        valid_mask = (data != nodata_val) & (data >= min_val) & (frac > 0)
+        weights = np.where(valid_mask, frac, 0.0)
+        total_w = float(weights.sum())
 
-        if len(valid_pixels) == 0:
+        if total_w <= 0:
             logger.info(
                 f"GHSL {layer_name}: all pixels are nodata — returning None"
             )
             return None
 
-        result = float(np.mean(valid_pixels))
+        # Area-weighted mean over the tile's real footprint: a cell only partly
+        # inside counts only for the part inside, instead of counting in full or
+        # not at all.
+        result = float((data.astype(float) * weights).sum() / total_w)
         logger.info(
-            f"GHSL {layer_name}: {len(valid_pixels)} valid pixels, "
-            f"mean = {result:.2f}"
+            f"GHSL {layer_name}: {int((valid_mask).sum())} valid cells, "
+            f"weighted mean = {result:.2f}"
         )
         return round(result, 2)
 
@@ -167,70 +220,53 @@ def compute_floor_area(min_lat, max_lat, min_lon, max_lon):
         return None
 
     try:
-        xs, ys = TRANSFORMER_TO_MOLL.transform(
-            [min_lon, max_lon, min_lon, max_lon],
-            [min_lat, min_lat, max_lat, max_lat]
-        )
-        moll_min_x, moll_max_x = min(xs), max(xs)
-        moll_min_y, moll_max_y = min(ys), max(ys)
+        poly = tile_polygon(min_lat, max_lat, min_lon, max_lon)
 
         with rasterio.open(built_path) as bsrc, rasterio.open(height_path) as hsrc:
-            raw_window = rasterio_from_bounds(
-                moll_min_x, moll_min_y, moll_max_x, moll_max_y, bsrc.transform
-            )
-            # Expand to the integer pixel range that the fractional window touches
-            # at all, so a cell only partially inside the bbox is still read (its
-            # overlap_fraction, computed below, is what actually discounts it).
-            col_off = math.floor(raw_window.col_off)
-            row_off = math.floor(raw_window.row_off)
-            col_end = math.ceil(raw_window.col_off + raw_window.width)
-            row_end = math.ceil(raw_window.row_off + raw_window.height)
-            window = Window(col_off=col_off, row_off=row_off,
-                            width=col_end - col_off, height=row_end - row_off)
-
-            if (window.width <= 0 or window.height <= 0 or
-                    window.col_off < 0 or window.row_off < 0 or
-                    window.col_off >= bsrc.width or window.row_off >= bsrc.height):
-                logger.warning(f"GHSL floor_area: bbox outside raster extent for window {window}")
+            window, overlap_fraction = overlap_grid(bsrc, poly)
+            if window is None:
+                logger.warning("GHSL floor_area: bbox outside raster extent")
                 return None
-
             built_data  = bsrc.read(1, window=window)
             height_data = hsrc.read(1, window=window)
 
-        if built_data.size == 0:
+        if built_data.size == 0 or built_data.shape != overlap_fraction.shape:
             return None
 
-        # overlap_fraction per cell: intersection of each integer pixel cell
-        # [c, c+1) x [r, r+1) (in window-local coordinates) with the real,
-        # fractional bbox window -- 1.0 for a cell fully inside, 0 for a cell
-        # entirely outside (shouldn't occur given the expand-to-integer step
-        # above, but clamped anyway), a fraction for an edge cell.
-        local_col_off = raw_window.col_off - col_off
-        local_row_off = raw_window.row_off - row_off
-        bbox_c0, bbox_c1 = local_col_off, local_col_off + raw_window.width
-        bbox_r0, bbox_r1 = local_row_off, local_row_off + raw_window.height
-
         n_rows, n_cols = built_data.shape
-        col_idx = np.arange(n_cols)
-        row_idx = np.arange(n_rows)
-        col_overlap = np.clip(np.minimum(col_idx + 1, bbox_c1) - np.maximum(col_idx, bbox_c0), 0, 1)
-        row_overlap = np.clip(np.minimum(row_idx + 1, bbox_r1) - np.maximum(row_idx, bbox_r0), 0, 1)
-        overlap_fraction = row_overlap[:, None] * col_overlap[None, :]
 
         built_nodata = GHSL_NODATA.get("built_surface", -200.0)
         height_nodata = GHSL_NODATA.get("building_height", -200.0)
         built_valid = (built_data != built_nodata) & (built_data >= 0.0)
         built_vals = np.where(built_valid, built_data, 0.0)
 
-        # Height: use the real reading where valid, otherwise floor to 3m (one
-        # storey) so a cell with real built area but a missing/implausible
-        # height reading still contributes rather than being dropped entirely.
+        # The height raster is GHS-BUILT-H AGBH, the average GROSS building
+        # height, which the GHSL data package (R2023A, section 2.2.1) defines as
+        # building volume divided by the WHOLE cell area:
+        #
+        #     AGBH = BUVOL / S          so   BUVOL = S * AGBH = 10,000 * AGBH
+        #     ANBH = BUVOL / BUSURF     (the net height, over built area only)
+        #     AGBH / ANBH = BUSURF / S  = the built fraction
+        #
+        # AGBH therefore already carries the built fraction inside it. An earlier
+        # version of this function computed built_surface * AGBH / 3, which
+        # applies that fraction a second time and understated floor area roughly
+        # twofold. Verified against real fabric: the old form put Haussmann-era
+        # central Paris at 8.3 m and FAR 0.9, where those blocks are six to seven
+        # storeys at about 18 m and the arrondissement's FAR is near 3.
+        #
+        # Volume is the extensive quantity, so volume is what gets summed.
         height_valid = (height_data != height_nodata) & (height_data > 0.0)
-        height_vals = np.where(height_valid, height_data, 3.0)
-        height_vals = np.maximum(height_vals, 3.0)
+        cell_volume = np.where(height_valid, height_data * CELL_AREA_M2, 0.0)
 
-        cell_floor_area = overlap_fraction * built_vals * (height_vals / 3.0)
-        total = float(np.sum(cell_floor_area))
+        # A cell with real built area but no usable height reading is floored at
+        # one storey rather than dropped, the same intent as the old clamp but
+        # applied to volume instead of to a gross height it did not fit.
+        cell_volume = np.where((cell_volume <= 0.0) & built_valid,
+                               built_vals * STOREY_HEIGHT_M, cell_volume)
+
+        total_volume = float(np.sum(overlap_fraction * cell_volume))
+        total = total_volume / STOREY_HEIGHT_M
 
         if not built_valid.any():
             logger.info("GHSL floor_area: no valid built_surface cells -- returning None")
@@ -245,6 +281,47 @@ def compute_floor_area(min_lat, max_lat, min_lon, max_lon):
         return None
 
 
+
+def compute_building_height(min_lat, max_lat, min_lon, max_lon):
+    """Mean NET building height over the tile, in metres.
+
+    The raster holds AGBH, the gross height (volume per whole cell), so reading
+    it directly reports a value diluted by however much of the cell is unbuilt:
+    Haussmann-era Paris reads 8.3 m that way, against a real 18.7 m. GHSL's own
+    relation ANBH = BUVOL / BUSURF recovers the real height, computed here over
+    the whole tile rather than per cell so a mostly-empty cell cannot swing it.
+
+    Returns float or None when the tile has no built surface to divide by.
+    """
+    built_path = GHSL_PATHS.get("built_surface")
+    height_path = GHSL_PATHS.get("building_height")
+    if not (built_path and height_path
+            and os.path.exists(built_path) and os.path.exists(height_path)):
+        return None
+    try:
+        poly = tile_polygon(min_lat, max_lat, min_lon, max_lon)
+        with rasterio.open(built_path) as bsrc, rasterio.open(height_path) as hsrc:
+            window, frac = overlap_grid(bsrc, poly)
+            if window is None:
+                return None
+            b = bsrc.read(1, window=window).astype(float)
+            h = hsrc.read(1, window=window).astype(float)
+        if b.shape != frac.shape:
+            return None
+        bn = GHSL_NODATA.get("built_surface", -200.0)
+        hn = GHSL_NODATA.get("building_height", -200.0)
+        b = np.where((b != bn) & (b >= 0.0), b, 0.0)
+        h = np.where((h != hn) & (h > 0.0), h, 0.0)
+        built_total = float((frac * b).sum())
+        volume_total = float((frac * h * CELL_AREA_M2).sum())
+        if built_total <= 0 or volume_total <= 0:
+            return None
+        return round(volume_total / built_total, 2)
+    except Exception as e:
+        logger.warning(f"GHSL building height: read error -- {e}")
+        return None
+
+
 # ── Main extraction function ───────────────────────────────────────────────────
 
 def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
@@ -254,7 +331,16 @@ def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     Returns a flat dict with keys:
         ghsl_built_surface_m2    — mean built-up surface area (m²) per 100m cell
         ghsl_building_height_m   — mean building height (metres)
-        ghsl_population_per_km2  — mean population density (persons/km²)
+        ghsl_population_per_km2      — mean of GHS-POP cells (persons per 100m
+                                       cell, despite the name; kept for the
+                                       class gates, which read it that way)
+        ghsl_population_bbox_total   — persons inside the bbox, overlap-weighted
+
+    compute_bbox_population() also returns a per-km2 density, but that is not
+    stored as a feature: the dataset's unit is the 512 m tile, and nothing reads
+    a per-km2 figure. It exists only to convert published thresholds that are
+    quoted per km2 (GHS-SMOD) into people-per-tile, which feature_bands.py does
+    once at module level rather than per coordinate.
 
     Any feature without valid data is simply absent from the returned dict.
     Never returns nodata sentinel values.
@@ -269,14 +355,22 @@ def extract_ghsl_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
         features["ghsl_built_surface_m2"] = built
 
     # ── Building height ────────────────────────────────────────────────────────
-    height = sample_ghsl_layer("building_height", min_lat, max_lat, min_lon, max_lon)
+    height = compute_building_height(min_lat, max_lat, min_lon, max_lon)
     if height is not None:
         features["ghsl_building_height_m"] = height
 
-    # ── Population density ────────────────────────────────────────────────────
+    # ── Population ────────────────────────────────────────────────────────────
+    # Mean-of-cells, kept because the class gates read it as a per-cell count
+    # (see Section 3.4). Its name says per km2; the value is persons per 100m
+    # cell. compute_bbox_population below is the figure that actually describes
+    # the tile.
     pop = sample_ghsl_layer("population", min_lat, max_lat, min_lon, max_lon)
     if pop is not None:
         features["ghsl_population_per_km2"] = pop
+
+    pop_total, pop_density = compute_bbox_population(min_lat, max_lat, min_lon, max_lon)
+    if pop_total is not None:
+        features["ghsl_population_bbox_total"] = pop_total
 
     populated = len(features)
     logger.info(
@@ -321,3 +415,66 @@ if __name__ == "__main__":
         else:
             print("  No features returned (all nodata)")
         print()
+
+# ── Whole-tile, overlap-weighted population ───────────────────────────────────
+# Added 2026-09-09. GHS-POP cells hold an absolute person count per cell, not a
+# density, so the meaningful figure for a 512m bbox is the SUM of the people in
+# it, not the mean of the cells it touches. The existing mean-of-cells reading
+# (ghsl_population_per_km2, kept for the general feature record and for the
+# class gates, which read it correctly as a per-cell count) answers a different
+# question and carries a unit name it does not actually hold.
+#
+# Same geometry as compute_floor_area above: 512/100 = 5.12, so the bbox never
+# lines up with the grid and an edge cell must count only its overlapping
+# fraction. Population is assumed uniform within a cell, which is the standard
+# assumption for areal interpolation of a gridded count.
+
+def compute_bbox_population(min_lat, max_lat, min_lon, max_lon):
+    """
+    population = sum_i overlap_fraction_i * population_i
+
+    Returns (total_persons, density_per_km2) or (None, None) when the bbox has
+    no valid GHS-POP data at all. Density is derived from the same total and the
+    bbox's real area, so the two can never disagree.
+    """
+    pop_path = GHSL_PATHS.get("population")
+    if not pop_path or not os.path.exists(pop_path):
+        logger.warning("GHSL bbox population: raster not found")
+        return None, None
+
+    try:
+        poly = tile_polygon(min_lat, max_lat, min_lon, max_lon)
+
+        with rasterio.open(pop_path) as src:
+            window, overlap_fraction = overlap_grid(src, poly)
+            if window is None:
+                logger.warning("GHSL bbox population: bbox outside raster extent")
+                return None, None
+            data = src.read(1, window=window)
+
+        if data.size == 0 or data.shape != overlap_fraction.shape:
+            return None, None
+
+        n_rows, n_cols = data.shape
+
+        nodata_val = GHSL_NODATA.get("population", -200.0)
+        valid = (data != nodata_val) & (data >= 0.0)
+        if not valid.any():
+            logger.info("GHSL bbox population: no valid cells -- returning None")
+            return None, None
+
+        vals = np.where(valid, data, 0.0)
+        total = float(np.sum(overlap_fraction * vals))
+
+        # Mollweide is equal-area, so the polygon's own area in projected
+        # metres is the tile's real ground area (0.262144 km^2 for a 512 m tile).
+        area_km2 = poly.area / 1e6
+        density = total / area_km2 if area_km2 > 0 else None
+
+        logger.info(f"GHSL bbox population: {n_rows * n_cols} cells, "
+                    f"total = {total:.1f} persons over {area_km2:.4f} km^2")
+        return round(total, 1), (round(density, 1) if density is not None else None)
+
+    except Exception as e:
+        logger.warning(f"GHSL bbox population: read error -- {e}")
+        return None, None

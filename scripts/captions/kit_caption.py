@@ -46,7 +46,7 @@ from scripts.captions.caption_prompt import build_prompt  # shared, single sourc
 logger = get_logger("kit_caption")
 
 KIT_BASE_URL = "https://ki-toolbox.scc.kit.edu/api/v1"
-DEFAULT_MODEL = "kit.gpt-oss-120b"
+DEFAULT_MODEL = "kit.mistral-small-4-119b-a8b"
 
 
 def generate_caption(features: dict, bbox_size_m: int = 512) -> str:
