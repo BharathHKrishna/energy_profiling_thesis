@@ -29,7 +29,7 @@ from scripts.utils.naming import slug_name as slug
 # would just be noise.
 KEY_FIELDS = [
     "heating_MWh", "cooling_MWh", "demand_regime", "demand_score", "demand_tier",
-    "ghsl_built_surface_m2", "ghsl_building_height_m", "ghsl_population_per_km2",
+    "ghsl_built_surface_m2", "ghsl_building_height_m", "ghsl_population_bbox_total",
     "viirs_ntl_nw_cm2_sr", "raw_element_count",
 ]
 

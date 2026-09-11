@@ -12,7 +12,6 @@ heating and cooling demand as well.
 Rewrites in place (originals backed up first):
     ghsl_built_surface_m2        mean built surface per cell
     ghsl_building_height_m       mean building height
-    ghsl_population_per_km2      mean of GHS-POP cells (per-cell count)
     ghsl_population_bbox_total   persons inside the tile
     ghsl_population_density_km2  that total over the tile's real area
     demand_floor_m2              overlap-weighted whole-tile floor area
@@ -47,7 +46,7 @@ BASE = "/srv/THESIS/energy_profiling_thesis"
 FEATURES_CSV = os.path.join(BASE, "outputs/csv/pore_features.csv")
 
 GHSL_COLS = ["ghsl_built_surface_m2", "ghsl_building_height_m",
-             "ghsl_population_per_km2", "ghsl_population_bbox_total"]
+             "ghsl_population_bbox_total"]
 DEMAND_COLS = ["demand_floor_m2", "demand_regime", "heating_MWh", "cooling_MWh"]
 
 

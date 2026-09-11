@@ -59,7 +59,7 @@ from shapely.geometry import Point, shape
 from shapely.ops import unary_union
 
 from scripts.extractors.worldcover_extractor import extract_worldcover_features
-from scripts.extractors.ghsl_extractor       import extract_ghsl_features
+from scripts.extractors.ghsl_extractor       import extract_ghsl_features, sample_ghsl_layer
 from scripts.bore.coordinate_filter      import (
     parse_esa_classes, parse_importance_tiers, build_strata_config,
     FEATURES_HTML, BREAKDOWN_HTML,
@@ -676,7 +676,7 @@ def _ghsl_ok(ghsl: dict | None, sc: dict) -> bool:
     if ghsl is None:
         return True
     pop   = ghsl.get("ghsl_population_per_km2") or 0
-    h     = ghsl.get("ghsl_building_height_m")  or 0
+    h     = ghsl.get("ghsl_gross_height_m")     or 0
     bsurf = ghsl.get("ghsl_built_surface_m2")
     if sc["pop_lo"]       and pop   < sc["pop_lo"]:                            return False
     if sc["pop_hi"]       and pop   > sc["pop_hi"]:                            return False
@@ -711,6 +711,16 @@ def _verify_point(sc: dict, lat: float, lon: float) -> dict | None:
         try:
             ghsl = extract_ghsl_features(lat, lon, bb["min_lat"], bb["max_lat"],
                                           bb["min_lon"], bb["max_lon"])
+            # The height gates were set, and the published sample drawn, on GHSL's
+            # GROSS height (building volume spread over the whole 100 m cell), under
+            # which "h >= 3 m" is exactly a floor-area ratio of 1.0.
+            # extract_ghsl_features() now returns the NET height, the right figure for
+            # PORE's record but a weaker condition here, so the gate reads the gross
+            # height directly.
+            if sc.get("h_lo") or sc.get("h_hi"):
+                ghsl["ghsl_gross_height_m"] = sample_ghsl_layer(
+                    "building_height", bb["min_lat"], bb["max_lat"],
+                    bb["min_lon"], bb["max_lon"])
         except Exception:
             return None
         if not _ghsl_ok(ghsl, sc):

@@ -183,6 +183,12 @@ def extract_all_features(lat, lon, stratum_name="", importance_tier="",
             result.update(outputs[name])
             logger.info(f"[{stratum_name}] {log_label}: {len(outputs[name])} features")
 
+    # BORE's class gates read ghsl_population_per_km2 as a per-cell count, which is
+    # why the shared GHSL function still returns it. It is not a property of the
+    # 512 m tile, and its name promises a unit it does not hold, so PORE leaves it
+    # out of the record: the tile's own population is ghsl_population_bbox_total.
+    result.pop("ghsl_population_per_km2", None)
+
     # 6b. Heating/cooling demand -- floor_area is its own overlap-weighted, per-cell
     # built x height read across the whole bbox (compute_floor_area(), fixed 2026-08-14),
     # not derived from the mean-based ghsl_built_surface_m2/ghsl_building_height_m

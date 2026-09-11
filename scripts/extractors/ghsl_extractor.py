@@ -420,8 +420,8 @@ if __name__ == "__main__":
 # Added 2026-09-09. GHS-POP cells hold an absolute person count per cell, not a
 # density, so the meaningful figure for a 512m bbox is the SUM of the people in
 # it, not the mean of the cells it touches. The existing mean-of-cells reading
-# (ghsl_population_per_km2, kept for the general feature record and for the
-# class gates, which read it correctly as a per-cell count) answers a different
+# (ghsl_population_per_km2, kept only for the class gates, which read it
+# correctly as a per-cell count; PORE leaves it out of the record) answers a different
 # question and carries a unit name it does not actually hold.
 #
 # Same geometry as compute_floor_area above: 512/100 = 5.12, so the bbox never

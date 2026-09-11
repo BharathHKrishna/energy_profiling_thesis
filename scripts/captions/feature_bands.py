@@ -86,8 +86,9 @@ def cover_name(key):
 # ghsl_population_bbox_total is the overlap-weighted SUM of the GHS-POP cells the
 # tile covers, i.e. the people actually inside the 512 m box. GHS-POP's 100 m
 # product stores an absolute count per cell, so summing is the right operation.
-# The older mean-of-cells column (ghsl_population_per_km2) is kept because the
-# class gates read it as a per-cell count, but it is not what this band uses.
+# The older mean-of-cells value (ghsl_population_per_km2) is still computed for the
+# class gates, which read it as a per-cell count, but it is not in the published
+# record and not what this band uses.
 #
 # Thresholds are GHS-SMOD's published Degree of Urbanisation densities, converted
 # once into this tile's own units rather than converting every coordinate: a
