@@ -165,10 +165,20 @@ def _extract_and_maps_worker(row):
         # empty files behind, and treating "exists" as "already carved" silently
         # read them as genuinely-empty tiles (found live 2026-08-24, N=250 test --
         # 885 stale 0-byte tiles left over from earlier tonight's killed local carve).
-        if not (os.path.exists(_tile_path) and os.path.getsize(_tile_path) > 0):
-            if not fetch_tile_any_mirror(lat, lon):
-                logger.warning(f"[{name}] OSM carve failed on every mirror for ({lat},{lon}) "
-                               "-- proceeding, features/maps will show sparse/no OSM data")
+        # Fetch as Overpass JSON rather than PBF. The PBF round trip lost every way
+        # (buildings, land use, waterways, power lines, roof tags) because
+        # `osmium export` needs ID-ordered input and Overpass does not provide it;
+        # osm_json_tiles.py carries the measurements. The JSON fetcher also refuses
+        # to accept an empty answer from a single mirror, which is the separate
+        # defect in Section 6.6. The PBF branch stays below only as a fallback for
+        # tiles fetched before this change.
+        from scripts.extractors.osm_json_tiles import fetch_tile as _fetch_json_tile, \
+            tile_path as _json_tile_path
+        _jp = _json_tile_path(lat, lon)
+        if not (os.path.exists(_jp) and os.path.getsize(_jp) > 0):
+            if _fetch_json_tile(lat, lon) is None:
+                logger.warning(f"[{name}] OSM fetch failed on every mirror for ({lat},{lon}) "
+                               "-- proceeding, features/maps will show no OSM data")
 
         circuit_breaker_wait()
         features = extract_all_features(

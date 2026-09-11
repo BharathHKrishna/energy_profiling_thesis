@@ -38,7 +38,13 @@ from scripts.utils.naming import slug_name
 logger = get_logger("segmap_generator")
 
 BASE       = "/srv/THESIS/energy_profiling_thesis"
-OUTPUT_DIR = os.path.join(BASE, "outputs/maps/segmaps")
+# Overridable so a separate run (e.g. the city case study) can write its maps
+# elsewhere without disturbing the thesis dataset. Unset means the original path.
+# The map set shipped with this thesis was rendered at 256 dpi; the
+# renderers had since drifted to 150, which is why a re-render produced
+# images 43 % smaller than the originals. Pinned here so code and data agree.
+MAP_DPI = int(os.environ.get("PORE_MAP_DPI", "256"))
+OUTPUT_DIR = os.environ.get("PORE_SEGMAP_DIR") or os.path.join(BASE, "outputs/maps/segmaps")
 ESRI_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 TILE_ZOOM  = 17
 BG         = "#0f172a"
@@ -1022,7 +1028,7 @@ def render_ghsl_segmap(name, lat, lon, variant="pop", save=True, esri_img=None, 
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         out = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_{variant}_segmap.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
+        plt.savefig(out, dpi=MAP_DPI, bbox_inches="tight", facecolor=BG)
         plt.close(fig)
         logger.info(f"Saved: {out}")
         return out
@@ -1050,7 +1056,7 @@ def generate_single(lat, lon, stratum_name="anchor", save=True, esri_img=None, w
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         out  = os.path.join(OUTPUT_DIR, f"{slug_name(stratum_name)}_segmap.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight", facecolor="#0f172a")
+        plt.savefig(out, dpi=MAP_DPI, bbox_inches="tight", facecolor="#0f172a")
         plt.close(fig)
         logger.info(f"Saved: {out}")
         return out

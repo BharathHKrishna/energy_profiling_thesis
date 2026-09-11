@@ -132,6 +132,22 @@ def read_local_osm(min_lat, max_lat, min_lon, max_lon, lat=None, lon=None):
     if lat is None or lon is None:
         lat = (min_lat + max_lat) / 2
         lon = (min_lon + max_lon) / 2
+
+    # Preferred path: the tile kept as Overpass JSON. The older .osm.pbf tiles are
+    # read back with `osmium export`, which needs ID-ordered input and silently
+    # discards every way when it does not get it, so buildings, land use,
+    # waterways, power lines and roof tags never survived that round trip (see
+    # osm_json_tiles.py for the measurements). Reading the JSON keeps them. The PBF
+    # branch below stays as a fallback for coordinates whose JSON tile has not been
+    # fetched yet, so nothing breaks while the two caches overlap.
+    try:
+        from scripts.extractors.osm_json_tiles import read_tile as _read_json_tile
+        _json_els = _read_json_tile(lat, lon)
+        if _json_els is not None:
+            return _json_els
+    except Exception as exc:
+        logger.warning(f"JSON tile read failed ({exc}) — falling back to the PBF tile")
+
     tile = os.path.join(TILES_DIR, _tile_name(lat, lon))
     if os.path.exists(tile):
         try:

@@ -41,7 +41,13 @@ from scripts.utils.logger import get_logger
 logger = get_logger("detection_map")
 
 BASE       = "/srv/THESIS/energy_profiling_thesis"
-OUTPUT_DIR = os.path.join(BASE, "outputs/maps/detection")
+# Overridable so a separate run (e.g. the city case study) can write its maps
+# elsewhere without disturbing the thesis dataset. Unset means the original path.
+# The map set shipped with this thesis was rendered at 256 dpi; the
+# renderers had since drifted to 150, which is why a re-render produced
+# images 43 % smaller than the originals. Pinned here so code and data agree.
+MAP_DPI = int(os.environ.get("PORE_MAP_DPI", "256"))
+OUTPUT_DIR = os.environ.get("PORE_DETECTION_DIR") or os.path.join(BASE, "outputs/maps/detection")
 BG         = "#0f172a"
 CLR_BLDG   = "#00e5ff"   # cyan — MS + OSM buildings
 
@@ -244,7 +250,7 @@ def render_detection_panels(name, lat, lon, save=True, elements=None, esri_img=N
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         out  = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_detection.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
+        plt.savefig(out, dpi=MAP_DPI, bbox_inches="tight", facecolor=BG)
         plt.close()
         logger.info(f"Saved: {out}")
         return out
@@ -363,7 +369,7 @@ def render_ghsl_det(name, lat, lon, variant="pop", save=True, elements=None, esr
     if save:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         out = os.path.join(OUTPUT_DIR, f"{slug_name(name)}_{variant}_det.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=BG)
+        plt.savefig(out, dpi=MAP_DPI, bbox_inches="tight", facecolor=BG)
         plt.close(fig)
         logger.info(f"Saved: {out}")
         return out
