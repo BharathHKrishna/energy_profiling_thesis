@@ -21,6 +21,13 @@ Rewritten 2026-09-09, two changes:
    one pixel per four 512 m tiles, so a solar figure quoted for a tile is a
    regional value wearing a local label. Every other feature in the record
    resolves at or below tile scale and describes the built environment itself.
+
+Changed 2026-09-16: climate and demand removed. The caption is the text half of an
+image-text pair, and a heating season, a cooling season or a conditioning need
+cannot be seen in an image of the tile. The heating and cooling bands and the
+demand regime are no longer passed to the model, it is no longer asked what drives
+demand, and it is told not to mention climate, heating, cooling or demand at all.
+Those values stay in the feature record, which is where they belong.
 """
 
 from scripts.captions.feature_bands import describe
@@ -38,6 +45,14 @@ def _infrastructure(features: dict) -> str:
         parts.append("transmission towers")
     if features.get("osm_generator_source"):
         parts.append(f"a {features['osm_generator_source']} generator")
+    return ", ".join(parts) if parts else "none mapped"
+
+
+def _other_mapped(features: dict) -> str:
+    """Waterways, land use and amenities. Kept apart from energy infrastructure
+    (2026-09-16): under one shared heading the model called schools, cemeteries
+    and drainage ditches energy infrastructure."""
+    parts = []
     if features.get("osm_waterway"):
         parts.append(f"a waterway ({features['osm_waterway']})")
     if features.get("osm_landuse"):
@@ -75,10 +90,6 @@ def build_prompt(features: dict, bbox_size_m: int = 512) -> str:
     def g(key, fallback="not available"):
         return b.get(key, fallback)
 
-    regime = (g("demand_regime", "not determined") or "not determined")
-    # the stored regime string carries an em dash; this project's prose does not
-    regime = regime.replace("—", ",").replace(" ,", ",")
-
     lines = [
         f"Land cover is dominated by {g('dominant_cover', 'no single class')}, "
         f"which covers {g('dominant_share', 'an unclear share of')} the area.",
@@ -92,26 +103,25 @@ def build_prompt(features: dict, bbox_size_m: int = 512) -> str:
         f"Nighttime lighting (VIIRS): {g('night_lights')}.",
         f"Vegetation greenness (NDVI): {g('vegetation')}.",
         f"Surface brightness (MODIS): {g('reflectance')}.",
-        f"Heating climate: {g('heating_season')}.",
-        f"Cooling climate: {g('cooling_season')}.",
-        f"Dominant conditioning need: {regime}.",
         f"Building footprints: {_buildings(features)}.",
         f"Energy infrastructure mapped in OpenStreetMap: {_infrastructure(features)}.",
+        f"Other features mapped in OpenStreetMap (not energy infrastructure): {_other_mapped(features)}.",
     ]
     body = "\n".join(lines)
 
-    return f"""You are a geospatial energy analyst. A user has selected a {bbox_size_m}m \xd7 {bbox_size_m}m area at {lat:.4f}\xb0, {lon:.4f}\xb0. Write a concise 3-5 sentence factual description of this location from an energy perspective.
+    return f"""You are a geospatial energy analyst. A user has selected a {bbox_size_m}m \xd7 {bbox_size_m}m area at {lat:.4f}\xb0, {lon:.4f}\xb0. Write a concise 3-5 sentence factual description of this location: its land cover, built environment, activity and energy infrastructure.
 
 Every observation below has already been graded into a category against its own data source's published thresholds. Work only from these categories.
 
 {body}
 
-Describe what this location's land cover, built form, climate and infrastructure together imply about its energy profile: what drives demand here, what the built environment looks like, and what the lighting and population signals suggest about activity.
+Describe what the built environment looks like, how the land is used, what the lighting and population signals suggest about activity, and what is mapped there. Only call something energy infrastructure if it is listed under energy infrastructure.
 
 Rules:
 - Write only the description. No headings, no bullet points, no preamble.
 - Use the qualitative wording given. Do not invent numbers, percentages, densities, degree-day totals, energy figures, or units, and do not convert the categories back into figures.
 - Do not name a specific city, district, country, or landmark. Describe the place, do not identify it.
+- Do not mention climate, weather, temperature, seasons, heating, cooling, air conditioning, energy demand, energy consumption or energy needs, in any form. None of these can be seen in an image of the tile.
 - Where a value is "not available", either say it is unavailable or leave it out. Never guess it.
 - If OpenStreetMap footprints or infrastructure are unmapped, that means the area lacks map coverage, not that nothing stands there. Say it is unmapped, and draw no conclusion about the energy system from it.
 - Do not use em dashes (—); use commas, periods, or "and" instead."""

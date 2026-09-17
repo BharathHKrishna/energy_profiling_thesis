@@ -2,8 +2,8 @@
 Word clouds for the city case study.
 
 Why this is not a plain frequency cloud. Every caption comes from the same
-generator, so a few words sit in nearly all 948 of them: heating in 100 percent
-of captions, lighting in 100, energy in 99, infrastructure in 97. A cloud sized
+generator, so a few words sit in nearly all 948 of them, lighting and
+infrastructure among them. A cloud sized
 by raw count shows those words and little else, which describes the caption
 template rather than the city.
 
@@ -18,12 +18,12 @@ Inside that selection, size is ordinary document frequency, so a large word is
 one that genuinely appears in many captions. Colour carries the log odds, so the
 darkest words are the most distinctive.
 
-Negation is handled explicitly. Frankfurt has no cooling season, and the
-captions say so, so a bare two word phrase would put "meaningful cooling" on the
-page with its meaning reversed. A phrase may therefore open with a negator or a
-qualifier and run to four words, those opening words never stand alone, and a
-short phrase is dropped when a longer one containing it occurs about as often.
-That prints "no meaningful cooling season" rather than leaving the misreading up.
+Negation is handled explicitly. A caption that says a tile has no mapped
+buildings would otherwise put "mapped buildings" on the page with its meaning
+reversed. A phrase may therefore open with a negator or a qualifier and run to
+four words, those opening words never stand alone, and a short phrase is dropped
+when a longer one containing it occurs about as often. (Written for the climate
+phrases in the captions before 2026-09-16, which no longer carry climate.)
 
 Layout is a grid packer. Words are placed largest first, each at the free
 position nearest the centre on a fine grid, trying smaller type and then a
@@ -60,7 +60,10 @@ GLOBAL_CAPTIONS = os.path.join(BASE, "outputs/captions/pore_captions.json")
 TEXT_WIDTH_IN = 6.3
 
 matplotlib.rcParams["pdf.fonttype"] = 42
-matplotlib.rcParams["font.family"] = "DejaVu Sans"
+# Cmr10, the thesis body face, as in every other thesis figure (was DejaVu Sans until 2026-09-17)
+matplotlib.rcParams["font.family"] = "serif"
+matplotlib.rcParams["font.serif"] = ["cmr10"]
+matplotlib.rcParams["axes.unicode_minus"] = False
 
 # Connectives, framing verbs and empty nouns. None of them says anything about a
 # place: they are how the generator glues clauses together, they occur at much
@@ -78,6 +81,7 @@ contributing contributes contribute character characteristics terms used using w
 potential primarily driven lack lacks lacking absence absent devoid mass
 points point concentration concentrated conditions due
 reinforce reinforces primary dominates dominate nearly
+areas alongside signal signals mapped land throughout covered dominated
 """.split())
 
 # These may open a phrase but never stand alone. "effectively unpopulated" and

@@ -51,11 +51,11 @@ def coord_key(lat, lon):
     return f"{round(float(lat), 6)},{round(float(lon), 6)}"
 
 
-def load_rows():
+def load_rows(features_csv=FEATURES_CSV):
     """CSV row -> feature dict, empty strings dropped so the null contract holds
     (an absent key means no data; it must never arrive as '' or NaN)."""
     rows = []
-    with open(FEATURES_CSV) as fh:
+    with open(features_csv) as fh:
         for raw in csv.DictReader(fh):
             feat = {}
             for k, v in raw.items():
@@ -80,18 +80,20 @@ def main():
     ap.add_argument("--resume", action="store_true",
                     help="keep captions already present instead of regenerating them")
     ap.add_argument("--out", default=CAPTIONS_JSON)
+    ap.add_argument("--features", default=FEATURES_CSV,
+                    help="feature table to caption (e.g. the Frankfurt case study)")
     ap.add_argument("--workers", type=int, default=WORKERS)
     args = ap.parse_args()
 
-    rows = load_rows()
+    rows = load_rows(args.features)
     if args.limit:
         rows = rows[:args.limit]
-    logger.info(f"Loaded {len(rows)} coordinates from {FEATURES_CSV}")
+    logger.info(f"Loaded {len(rows)} coordinates from {args.features}")
 
     captions = {}
     if os.path.exists(args.out):
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = f"{args.out}.pre_categorical_{stamp}.bak"
+        backup = f"{args.out}.pre_regen_{stamp}.bak"
         shutil.copy2(args.out, backup)
         logger.info(f"Existing captions backed up to {backup}")
         if args.resume:
