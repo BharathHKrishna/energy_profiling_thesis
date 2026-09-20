@@ -81,7 +81,7 @@ contributing contributes contribute character characteristics terms used using w
 potential primarily driven lack lacks lacking absence absent devoid mass
 points point concentration concentrated conditions due
 reinforce reinforces primary dominates dominate nearly
-areas alongside signal signals mapped land throughout covered dominated
+areas alongside signal signals mapped land throughout covered dominated use setting
 """.split())
 
 # These may open a phrase but never stand alone. "effectively unpopulated" and
@@ -126,6 +126,21 @@ PARAPHRASES = [
     (re.compile(r"\blow energy (demand|consumption|use|needs|requirements)\b"), "low energy demand"),
     (re.compile(r"\b(heating|cooling) (needs|requirements)\b"), r"\1 demand"),
     (re.compile(r"\bdense mass of\b"), "dense"),
+    # One concept, one term (2026-09-17). Wordings that say the same thing are
+    # rewritten to a single form before counting, so the cloud shows the fact once
+    # at its combined frequency instead of as near-duplicates side by side.
+    (re.compile(r"\bsparsely settled\b"), "sparse settlement"),
+    (re.compile(r"\bdense forest\b"), "dense tree cover"),
+    (re.compile(r"\bforested\b"), "forest"),
+    # "minimal cropland, water, or bare ground" means none of them; only in front of
+    # land cover, so "minimal human activity" keeps its meaning
+    (re.compile(r"\b(?:minimal|very little|very limited) (?=(?:tree|cropland|crop|water|bare|grass|shrub))"), "no "),
+    (re.compile(r"\bbuilt environment\b"), "built-up environment"),
+    (re.compile(r"\b(single-storey|low-rise|mid-rise|high-rise) built-up environment\b"), r"\1 buildings"),
+    (re.compile(r"\bstructures?\b"), "buildings"),
+    (re.compile(r"\bsurfaces\b"), "surface"),
+    (re.compile(r"\bbuildings\b"), "building"),
+    (re.compile(r"\bfootprints\b"), "footprint"),
 ]
 
 # One hue, light to dark, for one magnitude: how much more common a term is here
@@ -134,6 +149,77 @@ PARAPHRASES = [
 # words must still read at 5:1 on white in print.
 RAMP = ["#256abf", "#184f95", "#0d366b"]
 INK = LinearSegmentedColormap.from_list("ink", RAMP)
+
+# Negation written after a list, "cropland, water, and bare ground are essentially
+# absent" or "... cover essentially none of the tile", is turned round into the
+# front form "no cropland, water, and bare ground" before counting. Without it the
+# list items count as present, and the built-up core's cloud printed "water" in
+# over half its captions.
+_TRAILING_NEG = re.compile(
+    r"\b(?:are|is)\s+(?:essentially\s+|virtually\s+|almost\s+entirely\s+|largely\s+|"
+    r"completely\s+|entirely\s+)?(?:absent|missing|lacking|non-?existent)\b"
+    r"|\b(?:essentially|virtually|almost\s+entirely|largely|completely|entirely)\s+"
+    r"(?:absent|missing|lacking|non-?existent)\b"
+    r"|\bcovers?\s+(?:essentially|virtually|almost)\s+(?:none|nothing)(?:\s+of\s+the\s+(?:area|tile))?\b")
+_LIST_START = re.compile(r"\b(?:while|but|whereas|although|though|with)\b|[.;:]")
+
+
+_VERBS = {"is", "are", "was", "were", "appears", "appear", "has", "have", "seems", "seem",
+          "remains", "remain", "includes", "include", "shows", "show", "indicates",
+          "indicate", "suggests", "suggest", "features", "dominated", "dominates"}
+_BREAKS = {"while", "but", "whereas", "although", "though", "with", "where"}
+
+
+def _list_start(text, end):
+    """Start offset of the comma or and/or list that ends just before `end`.
+
+    Walks back item by item, "tree, cropland, water, and bare ground cover", and
+    stops at a verb or a clause word, so "the surface appears dark, and ..." is
+    left out of the list.
+    """
+    toks = list(re.finditer(r"[a-z][a-z\-]*|,", text[:end]))
+    start = end
+    i = len(toks) - 1
+    items = 0
+    while i >= 0:
+        # one item: up to five words, none of them a verb or clause word
+        j, words = i, 0
+        while j >= 0 and toks[j].group(0) not in {","} | _VERBS | _BREAKS and words < 5:
+            if toks[j].group(0) in ("and", "nor") or (toks[j].group(0) == "or" and words == 0):
+                break
+            j -= 1
+            words += 1
+        if words == 0:
+            break
+        start = toks[j + 1].start()
+        items += 1
+        # a separator must follow for the list to go on: ",", "and", "or", ", and"
+        k = j
+        seps = 0
+        while k >= 0 and toks[k].group(0) in (",", "and", "or", "nor"):
+            k -= 1
+            seps += 1
+        if seps == 0:
+            break
+        i = k
+    return start, items
+
+
+def front_negation(text):
+    for m in reversed(list(_TRAILING_NEG.finditer(text))):
+        before = text[:m.start()]
+        clause = max(before.rfind("."), before.rfind(";"), before.rfind(":")) + 1
+        a, items = _list_start(text, m.start())
+        singular = re.match(r"\s*(?:is|covers)\b", text[m.start():]) is not None
+        if singular and items < 3:
+            # "water is essentially absent": the subject starts after the nearest
+            # comma or "and", not at an earlier clause
+            cuts = [b.end() for b in re.finditer(r",|\band\b", before) if b.end() > clause]
+            a = max(cuts + [clause])
+        a = max(a, clause)
+        text = text[:a] + " no " + text[a:m.start()] + text[m.end():]
+    return text
+
 
 WORD = re.compile(r"[a-z][a-z\-]*")
 MAX_NGRAM = 4
@@ -152,16 +238,23 @@ def terms_of(text):
     text = text.lower()
     for pat, sub in PARAPHRASES:
         text = pat.sub(sub, text)
-    for clause in re.split(r"[.;,:]", text):
-        ws = WORD.findall(clause)
+    text = front_negation(text)
+    for clause in re.split(r"[.;:]", text):
+        # Commas stay in as tokens: a phrase never runs across one, but a
+        # negation does when the comma continues a list, so "no cropland,
+        # water, or bare ground" negates all three instead of only the first.
+        ws = re.findall(r"[a-z][a-z\-]*|,", clause)
         n = len(ws)
-        content = [len(w) >= 3 and w not in STOP for w in ws]
+        comma = [w == "," for w in ws]
+        content = [not comma[i] and len(w) >= 3 and w not in STOP for i, w in enumerate(ws)]
         neg = [False] * n
         for i in range(n):
+            if comma[i]:
+                continue
             # a negator a few slots back with nothing of substance in between,
             # which is what "lack of a meaningful cooling season" looks like
             for j in range(max(0, i - 4), i):
-                if ws[j] in NEGATORS and not any(content[k] for k in range(j + 1, i)):
+                if ws[j] in NEGATORS and not any(content[k] or comma[k] for k in range(j + 1, i)):
                     neg[i] = True
                     break
             # negation then runs on through the noun phrase and stops at the
@@ -169,6 +262,14 @@ def terms_of(text):
             # town lighting" leaves the lighting alone
             if not neg[i] and i and neg[i - 1] and content[i - 1]:
                 neg[i] = True
+            # the next item of a negated list: ", water", ", or bare ground",
+            # "and water" or "bare or sparse ground"
+            if not neg[i] and content[i]:
+                k = i - 1
+                while k >= 0 and ws[k] in ("or", "and", "nor"):
+                    k -= 1
+                if (k >= 1 and comma[k] and neg[k - 1]) or (k >= 0 and k < i - 1 and not comma[k] and neg[k]):
+                    neg[i] = True
         for i, w in enumerate(ws):
             if not (content[i] or w in QUALIFIERS):
                 continue
@@ -231,7 +332,14 @@ def dedupe(rows, ratio=1.6):
                for k, kc, _ in kept):
             continue
         kept.append((term, c, lo))
-    return kept
+    # A longer phrase that only adds words to a term already in the cloud says
+    # the same thing again ("mid-rise building" next to "mid-rise", "sparse
+    # settlement activity" next to "sparse settlement"), so it is dropped. A
+    # negated phrase is never absorbed by its positive, or the reverse.
+    neg = lambda t: t.split()[0] == "no"
+    return [(t, c, lo) for t, c, lo in kept
+            if not any(k != t and neg(k) == neg(t) and re.search(rf"\b{re.escape(k)}\b", t)
+                       for k, _, _ in kept)]
 
 
 def _candidates(rng, nx=400, ny=260):

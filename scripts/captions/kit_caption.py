@@ -20,8 +20,9 @@ in plaintext beyond the .env file, which is already gitignored):
     2. Settings (gear icon) -> Account -> API keys -> Create API Key.
     3. Add to /srv/THESIS/energy_profiling_thesis/.env:
            KIT_API_KEY=<paste the key here>
-    4. (Optional) override the model, default is kit.gpt-oss-120b:
-           KIT_MODEL=kit.gpt-oss-120b
+    4. (Optional) override the model, default is kit.mistral-small-4-119b-a8b
+       (the model every published caption was generated with):
+           KIT_MODEL=kit.mistral-small-4-119b-a8b
 
 Data-sensitivity note (from KIT's own 3-level classification): this pipeline's
 per-coordinate feature data is real research data, not public web content --
@@ -73,7 +74,8 @@ def generate_caption(features: dict, bbox_size_m: int = 512) -> str:
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=1200,
-                # gpt-oss-120b spends real completion-token budget on an internal
+                # The budget is set for the worst case: kit.gpt-oss-120b, used until
+                # 2026-09-16, spent real completion-token budget on an internal
                 # reasoning pass before writing the visible answer (confirmed live
                 # 2026-08-24: max_tokens=500 -> finish_reason='length' at 500/500
                 # tokens, cut off mid-sentence; 900 -> completes but only ~160

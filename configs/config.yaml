@@ -45,5 +45,5 @@ logging:
 # (hit its 200,000 tokens/day account cap, ~38 days to caption 10k coordinates),
 # then fully removed 2026-08-27 — this project no longer calls Groq's API at all.
 api:
-  kit_model: "kit.gpt-oss-120b"
+  kit_model: "kit.mistral-small-4-119b-a8b"
   gee_project: "energy-thesis"
