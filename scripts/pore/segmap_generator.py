@@ -980,7 +980,7 @@ def render_ghsl_segmap(name, lat, lon, variant="pop", save=True, esri_img=None, 
         ghsl_grid = _sample_pop_grid(min_lat, max_lat, min_lon, max_lon, (h, w))
         ghsl_grid = np.where(ghsl_grid > 0, ghsl_grid, 1).astype(np.float32)
         cmap, vmin, vmax, norm = CMAP_POP, POP_MIN, POP_MAX, NORM_POP
-        title = "Population Density (GHSL 2020)"
+        title = "Population (GHSL 2020)"   # a count per 100 m cell, not a density
         legend_label = "Population (persons per 100m cell, log scale)"
     else:
         ghsl_grid = _sample_epoch_grid(min_lat, max_lat, min_lon, max_lon, (h, w))

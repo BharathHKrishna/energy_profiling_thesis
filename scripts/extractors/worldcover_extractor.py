@@ -117,8 +117,6 @@ def extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
         wc_secondary_class       — name of second most frequent class (if ≥5%)
         wc_secondary_pct         — % of bbox covered by secondary class
         wc_class_count           — number of distinct classes present
-        wc_energy_score_mean     — mean energy relevance score across all pixels
-        wc_std                   — standard deviation of energy scores (spatial variation)
         wc_classes_json          — JSON string of all classes with pixel counts and pcts
         wc_pixel_array           — raw pixel array (not in CSV/JSON — for M3 use only)
         wc_transform             — rasterio transform (not in CSV/JSON — for M3 use only)
@@ -176,13 +174,11 @@ def extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
             secondary_name = None
             secondary_pct  = None
 
-    # ── Energy score grid ─────────────────────────────────────────────────────
-    energy_grid = np.vectorize(
-        lambda c: WORLDCOVER_ENERGY_SCORE.get(int(c), 0.0)
-    )(pixels)
-
-    energy_mean = round(float(np.mean(energy_grid[pixels > 0])), 3)
-    energy_std  = round(float(np.std(energy_grid)), 3)
+    # The energy-relevance score (mean and spread over WORLDCOVER_ENERGY_SCORE)
+    # used to be computed and reported here. It was removed from the published
+    # record because no later stage read it: the class gates, the demand formula
+    # and the caption prompt all ignore it. The weight table below is kept for
+    # reference only.
 
     # ── Assemble features dict ────────────────────────────────────────────────
     import json
@@ -190,8 +186,6 @@ def extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
         "wc_dominant_class":    dominant_name,
         "wc_dominant_pct":      dominant_pct,
         "wc_class_count":       len(unique_classes),
-        "wc_energy_score_mean": energy_mean,
-        "wc_std":               energy_std,
         "wc_classes_json":      json.dumps(class_info),
         # Internal — for M3, not for CSV/JSON output
         "_wc_pixel_array":      pixels,
@@ -206,7 +200,7 @@ def extract_worldcover_features(lat, lon, min_lat, max_lat, min_lon, max_lon):
     logger.info(
         f"WorldCover ({lat}, {lon}): {populated} features — "
         f"dominant={dominant_name} ({dominant_pct}%), "
-        f"classes={len(unique_classes)}, std={energy_std}"
+        f"classes={len(unique_classes)}"
     )
 
     return features

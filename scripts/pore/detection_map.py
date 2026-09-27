@@ -227,7 +227,7 @@ def render_detection_panels(name, lat, lon, save=True, elements=None, esri_img=N
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     fig.patch.set_facecolor(BG)
     _ax_setup(ax, min_lon, max_lon, min_lat, max_lat, esri_img,
-              f"Detection Map — {name}  ·  {lat:.4f}, {lon:.4f}")
+              f"Detection Map: {name}  ·  {lat:.4f}, {lon:.4f}")
 
     osm_rings = [r for r in osm_rings if len(r) != 16]
     all_rings = _merge_no_overlap(ms_rings, osm_rings)
@@ -313,12 +313,12 @@ def render_ghsl_det(name, lat, lon, variant="pop", save=True, elements=None, esr
         ghsl_grid = _sample_pop_grid(min_lat, max_lat, min_lon, max_lon, (h, w))
         ghsl_grid = np.where(ghsl_grid > 0, ghsl_grid, 1).astype(np.float32)
         cmap, vmin, vmax, norm = CMAP_POP, POP_MIN, POP_MAX, NORM_POP
-        title = f"Detection — Population (GHSL 2020) · {name}"
+        title = f"Detection, Population (GHSL 2020) · {name}"
         legend_label = "Population (persons per 100m cell, log scale)"
     else:
         ghsl_grid = _sample_epoch_grid(min_lat, max_lat, min_lon, max_lon, (h, w))
         cmap, vmin, vmax, norm = CMAP_AGE, EPOCH_MIN, EPOCH_MAX, None
-        title = f"Detection — Urbanisation Epoch (GHSL) · {name}"
+        title = f"Detection, Urbanisation Epoch (GHSL) · {name}"
         legend_label = "First built-up epoch"
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))

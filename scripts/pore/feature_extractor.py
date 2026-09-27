@@ -40,9 +40,6 @@ def _apply_worldcover(wc_raw, result, label=""):
         for cls in _WC_CLASSES:
             result[f"wc_{cls}_pct"] = 0.0
 
-    if "wc_std" in wc:
-        wc["wc_energy_score_std"] = wc.pop("wc_std")
-
     result.update(wc)
     logger.info(f"[{label}] ESA: {len(wc) + len(_WC_CLASSES)} features")
 
