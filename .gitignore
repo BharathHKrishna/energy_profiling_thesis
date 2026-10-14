@@ -54,6 +54,7 @@ docs/cities_512m_floor_climate.xlsx
 # Dev-facing HTML docs and the thesis itself stay local, not pushed to GitHub
 *.html
 thesis/
+thesis_condensed/
 thesis_overleaf.zip
 
 # Notebooks — large embedded outputs, not meant for the code repo
@@ -61,3 +62,28 @@ notebooks/
 
 # Method note supplied as a reference document, not part of the codebase
 docs/demand_equations*.pdf
+
+# LaTeX build artifacts, in case a .tex tree is ever tracked
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.toc
+*.synctex.gz
+*.nav
+*.snm
+*.vrb
+
+# Decks and their generated scripts are built from kit_templates/, not committed
+*.pptx
+*.pptx~
+
+# Editor and tooling scratch
+.vscode/
+.idea/
+*.swp
+*~
