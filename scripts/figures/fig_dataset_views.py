@@ -178,20 +178,28 @@ def fig_builtup(rows):
 
 
 def fig_demand(rows):
+    def reported(col):
+        return np.array([float(r[col]) for r in rows if r[col] != ""])
+
     def positive(col):
         return np.array([float(r[col]) for r in rows if r[col] and float(r[col]) > 0])
 
     heat, cool = positive("heating_MWh"), positive("cooling_MWh")
+    # Full regime counts, so the legend agrees with Figure 5.8 and sums to 10,000.
+    # The difference is the tiles whose demand is exactly zero, which a log axis drops.
+    n_heat, n_cool = reported("heating_MWh").size, reported("cooling_MWh").size
     lo = math.floor(math.log10(min(heat.min(), cool.min())))
     hi = math.ceil(math.log10(max(heat.max(), cool.max())))
     bins = np.logspace(lo, hi, 40)
 
     fig, ax = plt.subplots(figsize=(WIDTH_IN, 3.2))
-    for vals, colour, label in ((heat, SLATE, "heating"), (cool, BROWN, "cooling")):
+    for vals, total, colour, label in ((heat, n_heat, SLATE, "heating"),
+                                       (cool, n_cool, BROWN, "cooling")):
         ax.hist(vals, bins=bins, histtype="stepfilled", color=colour, alpha=0.15,
                 linewidth=0)
+        zeros = total - vals.size
         ax.hist(vals, bins=bins, histtype="step", color=colour, linewidth=1.6,
-                label=f"{label} ({vals.size:,} tiles)")
+                label=f"{label} ({total:,} tiles, {zeros} at zero not shown)")
     ax.set_xscale("log")
     ax.set_xlabel("demand per tile (MWh per year, logarithmic axis)")
     ax.set_ylabel("coordinates")
