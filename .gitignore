@@ -87,3 +87,6 @@ docs/demand_equations*.pdf
 .idea/
 *.swp
 *~
+
+# Pre-edit snapshots kept locally, one live file per deliverable
+.backups/
